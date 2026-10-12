@@ -1,0 +1,42 @@
+{% import "_ui.html" as ui with context %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>Tenancies</h2><span class="sub">Visible to you | <b data-count-for="tenancies">{{ tenancies|length }}</b> total</span>
+    <span class="spacer"></span>
+    <div class="tools">
+      {% call ui.tasks() %}
+        {% if can_create_tenancy %}<button type="button" data-open="dlg-tenancy">Create tenancy&hellip;</button>{% endif %}
+        <a href="/admin/users/new">Add user&hellip;</a>
+      {% endcall %}
+    </div>
+  </div>
+  <div class="panel-tb">
+    {% if can_create_tenancy %}<button type="button" class="btn sm" data-open="dlg-tenancy">Create tenancy&hellip;</button>{% endif %}
+    <span style="flex:1"></span>{{ ui.filter("tenancies") }}
+  </div>
+  <div class="grid-wrap tall">
+    <table class="grid sortable" id="tenancies">
+      <thead><tr><th>Name</th><th class="num">Departments</th><th>Own devices</th><th>Department</th><th>Tenancy</th><th>Cross-tenancy DM</th><th>Description</th></tr></thead>
+      <tbody>
+      {% for t in tenancies %}
+      <tr data-href="/admin/tenancies/{{ t.id }}"><td><a href="/admin/tenancies/{{ t.id }}">{{ t.name }}</a></td>
+        <td class="num">{{ t.departments|length }}</td>
+        <td>{{ role_label(t.min_role_self_broadcast) }}</td><td>{{ role_label(t.min_role_department_broadcast) }}</td>
+        <td>{{ role_label(t.min_role_tenancy_broadcast) }}</td>
+        <td>{% if t.allow_cross_tenancy_dm %}<span class="st ok">Allowed</span>{% else %}<span class="st">Blocked</span>{% endif %}</td>
+        <td class="w100 hint">{{ t.description }}</td></tr>
+      {% else %}<tr class="empty"><td colspan="7">No tenancies.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% if can_create_tenancy %}
+{% call ui.dialog("dlg-tenancy", "Create tenancy", "/admin/tenancies", ok="Create") %}
+  <div class="lead">Create a tenancy</div>
+  <div class="fgrid">
+    <label for="t-name">Name</label><input id="t-name" name="name" required placeholder="example.com" class="mono">
+    <span class="note">Domain-like name. It becomes the last segment of every address.</span>
+    <label for="t-desc">Description</label><input id="t-desc" name="description">
+  </div>
+{% endcall %}
+{% endif %}

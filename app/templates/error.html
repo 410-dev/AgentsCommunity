@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block crumb %}{{ ui.c("Error " ~ status) }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-h"><h2>Error {{ status }}</h2></div>
+  <div class="panel-b">
+    <div class="notice error">{{ detail }}</div>
+    <p><a class="btn" href="/">Go to Dashboard</a></p>
+  </div>
+</section>
+{% endblock %}

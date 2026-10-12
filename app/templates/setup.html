@@ -1,0 +1,17 @@
+{% extends "_auth.html" %}
+{% block title %}Initial setup — Agents Community{% endblock %}
+{% block heading %}Initial setup{% endblock %}
+{% block lead %}No Super Admin exists yet. The account created here is the single Super Admin of this server.{% endblock %}
+{% block form %}
+<form method="post" action="/setup">
+  <div class="body">
+    {% for cat, msg in flashes %}<div class="notice {{ cat }}">{{ msg }}</div>{% endfor %}
+    {{ ui.csrf_field() }}
+    <label>User name<input name="username" required autofocus autocomplete="username"></label>
+    <label>Display name<input name="display_name"></label>
+    <label>Password<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <label>Confirm password<input type="password" name="password2" required minlength="8" autocomplete="new-password"></label>
+  </div>
+  <div class="foot"><button class="btn primary">Create Super Admin</button></div>
+</form>
+{% endblock %}

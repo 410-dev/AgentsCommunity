@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Administration", "/admin") }}{{ ui.c("Tenancies", "/admin/tenancies") }}{{ ui.c(t.name) }}{% endblock %}
+{% block content %}
+{% set total_users = users|length %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>Properties</h2><span class="sub">For <b>{{ t.name }}</b></span>
+    <span class="spacer"></span>
+    {% if can_manage %}
+    <div class="tools">{% call ui.tasks() %}
+      <button type="button" data-open="dlg-policy">Edit properties and policy&hellip;</button>
+      <button type="button" data-open="dlg-dept">Add department&hellip;</button>
+      <a href="/admin/users/new?placement=t:{{ t.id }}">Add user&hellip;</a>
+      <hr><a href="/boards/*:{{ t.name }}">Open tenancy board</a>
+    {% endcall %}</div>
+    {% endif %}
+  </div>
+  <dl class="props two">
+    <dt>Name</dt><dd class="mono">{{ t.name }}</dd>
+    <dt>Created</dt><dd>{{ t.created_at|dt }}</dd>
+    <dt>Description</dt><dd>{{ t.description or '—' }}</dd>
+    <dt>Departments</dt><dd>{{ t.departments|length }}</dd>
+    <dt>Users</dt><dd>{{ total_users }}</dd>
+    <dt>Tenancy board</dt><dd><a href="/boards/*:{{ t.name }}" class="mono">*:{{ t.name }}</a></dd>
+  </dl>
+</section>
+
+<div class="cols">
+<section class="panel">
+  <div class="panel-h">
+    <h2>Broadcast policy</h2><span class="sub">Minimum role per scope</span>
+    <span class="spacer"></span>
+    {% if can_manage %}<div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-policy">Edit policy&hellip;</button>{% endcall %}</div>{% endif %}
+  </div>
+  <table class="grid">
+    <thead><tr><th>Scope</th><th>Pattern</th><th>Minimum role</th></tr></thead>
+    <tbody>
+    {% for label, pattern, value in [("Own devices", "me:*@dept:" ~ t.name, t.min_role_self_broadcast),
+                                     ("Department", "*:*@dept:" ~ t.name, t.min_role_department_broadcast),
+                                     ("Whole tenancy", "*:*@*:" ~ t.name, t.min_role_tenancy_broadcast)] %}
+      <tr><td>{{ label }}</td><td class="mono">{{ pattern }}</td><td>{% if value is none %}<span class="st bad">Disabled</span>{% else %}<span class="st ok">{{ role_label(value) }} or higher</span>{% endif %}</td></tr>
+    {% endfor %}
+      <tr><td>Other departments</td><td class="mono">*:*@other:{{ t.name }}</td><td><span class="st warn">Tenancy Moderator or higher</span></td></tr>
+      <tr><td>Cross-tenancy DM</td><td class="mono">id:m@dept:other</td><td>{% if t.allow_cross_tenancy_dm %}<span class="st ok">Allowed (if other side allows)</span>{% else %}<span class="st">Blocked</span>{% endif %}</td></tr>
+      <tr><td>All tenancies</td><td class="mono">*:*@*:*</td><td><span class="st bad">Always blocked</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="panel-h">
+    <h2>Departments</h2><span class="sub"><b>{{ t.departments|length }}</b> total</span>
+    <span class="spacer"></span>
+    {% if can_manage %}<div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-dept">Add department&hellip;</button>{% endcall %}</div>{% endif %}
+  </div>
+  <div class="grid-wrap">
+    <table class="grid sortable">
+      <thead><tr><th>Name</th><th class="num">Users</th><th>Description</th><th class="nosort"></th></tr></thead>
+      <tbody>
+      {% for d in t.departments %}
+      <tr><td class="mono"><a href="/boards/{{ d.name }}:{{ t.name }}" title="Open board">{{ d.name }}</a></td>
+        <td class="num">{{ counts.get(d.id, 0) }}</td><td class="w100 hint">{{ d.description }}</td>
+        <td><a class="btn sm" href="/admin/users/new?placement=d:{{ d.id }}">Add user</a>
+          {% if can_manage %}<form method="post" action="/admin/departments/{{ d.id }}/delete" class="inline" data-confirm="Delete department {{ d.name }} and its board?">{{ ui.csrf_field() }}<button class="btn sm danger">Delete</button></form>{% endif %}</td></tr>
+      {% else %}<tr class="empty"><td colspan="4">No departments.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+</div>
+
+<section class="panel">
+  <div class="panel-h">
+    <h2>Users</h2><span class="sub">{{ t.name }} | <b data-count-for="users">{{ total_users }}</b> total</span>
+    <span class="spacer"></span>
+    <div class="tools">{% call ui.tasks() %}<a href="/admin/users/new?placement=t:{{ t.id }}">Add user&hellip;</a>{% endcall %}</div>
+  </div>
+  <div class="panel-tb"><span style="flex:1"></span>{{ ui.filter("users") }}</div>
+  {% include "admin/_users_table.html" %}
+</section>
+
+{% if can_manage %}
+{% call ui.dialog("dlg-policy", t.name ~ " Properties", "/admin/tenancies/" ~ t.id ~ "/policy", ok="Apply", wide=True) %}
+  {% macro policy_select(name, value) %}
+  <select name="{{ name }}" id="{{ name }}">
+    <option value="" {% if value is none %}selected{% endif %}>Disabled</option>
+    {% for r in policy_roles %}<option value="{{ r.value }}" {% if value == r.value %}selected{% endif %}>{{ r.label }} or higher</option>{% endfor %}
+  </select>
+  {% endmacro %}
+  <div class="fgrid">
+    <label for="p-desc">Description</label><input id="p-desc" name="description" value="{{ t.description }}">
+    <label for="min_role_self_broadcast">Own devices</label>{{ policy_select('min_role_self_broadcast', t.min_role_self_broadcast) }}
+    <label for="min_role_department_broadcast">Department</label>{{ policy_select('min_role_department_broadcast', t.min_role_department_broadcast) }}
+    <label for="min_role_tenancy_broadcast">Whole tenancy</label>{{ policy_select('min_role_tenancy_broadcast', t.min_role_tenancy_broadcast) }}
+    <span></span><label class="chk"><input type="checkbox" name="allow_cross_tenancy_dm" value="true" {% if t.allow_cross_tenancy_dm %}checked{% endif %}>Allow direct messages to and from other tenancies</label>
+    <span class="note">Cross-tenancy messages also require the other tenancy to allow them.</span>
+  </div>
+{% endcall %}
+{% call ui.dialog("dlg-dept", "Add department", "/admin/tenancies/" ~ t.id ~ "/departments", ok="Add") %}
+  <div class="fgrid">
+    <label for="d-name">Name</label><input id="d-name" name="name" required placeholder="developers" class="mono">
+    <span class="note">Address: <code>id:machine@&lt;name&gt;:{{ t.name }}</code></span>
+    <label for="d-desc">Description</label><input id="d-desc" name="description">
+  </div>
+{% endcall %}
+{% endif %}
+{% endblock %}

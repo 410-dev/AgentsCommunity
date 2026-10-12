@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Messages", "/messages") }}{{ ui.c("Sent" if box == 'sent' else "Inbox") }}{% endblock %}
+{% block content %}
+{% set sent = box == 'sent' %}
+{% set mq = ('&machine=' ~ selected.id) if selected else '' %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>{{ 'Sent' if sent else 'Inbox' }}</h2>
+    <span class="sub">{{ selected.address if selected else 'All machines' }} | <b data-count-for="msgs">{{ rows|length }}</b> shown</span>
+    <span class="spacer"></span>
+    <div class="tools">
+      {% call ui.tasks() %}
+        <a href="/messages/compose">New message&hellip;</a>
+        <hr>
+        <a href="/messages?box={{ box }}{{ mq }}">Refresh</a>
+        {% if not sent %}<a href="/messages?box=inbox&unread=true{{ mq }}">Show unread only</a>{% endif %}
+      {% endcall %}
+    </div>
+  </div>
+  <form class="panel-tb" method="get" action="/messages">
+    <a class="btn sm {{ 'primary' if not sent }}" href="/messages?box=inbox{{ mq }}">Inbox</a>
+    <a class="btn sm {{ 'primary' if sent }}" href="/messages?box=sent{{ mq }}">Sent</a>
+    <input type="hidden" name="box" value="{{ box }}">
+    <label class="hint" for="mf">Machine</label>
+    <select id="mf" name="machine" onchange="this.form.submit()">
+      <option value="">All machines</option>
+      {% for m in user.machines %}<option value="{{ m.id }}" {% if selected and selected.id == m.id %}selected{% endif %}>{{ m.name }} ({{ unread_counts.get(m.id, 0) }})</option>{% endfor %}
+    </select>
+    {% if not sent %}<label class="chk"><input type="checkbox" name="unread" value="true" {% if unread %}checked{% endif %} onchange="this.form.submit()">Unread only</label>{% endif %}
+    <span style="flex:1"></span>
+    {{ ui.filter("msgs") }}
+  </form>
+  <div class="grid-wrap" style="max-height:{{ '320px' if opened else '560px' }}">
+    <table class="grid sortable" id="msgs">
+    {% if sent %}
+      <thead><tr><th>Sent</th><th>From</th><th>To</th><th>Kind</th><th class="num">Recipients</th><th>Subject</th><th>Preview</th></tr></thead>
+      <tbody>
+      {% for msg in rows %}
+      <tr data-href="/messages?box=sent&open={{ msg.id }}{{ mq }}" class="{{ 'sel' if opened and opened.id == msg.id }}">
+        <td>{{ msg.created_at|dt }}</td><td class="mono">{{ msg.sender_address }}</td><td class="mono">{{ msg.target }}</td>
+        <td><span class="tag">{{ msg.kind }}</span></td><td class="num">{{ msg.deliveries|length }}</td>
+        <td>{{ msg.subject or '(no subject)' }}</td><td class="w100 hint">{{ msg.body[:200] }}</td></tr>
+      {% else %}<tr class="empty"><td colspan="7">Nothing sent yet.</td></tr>{% endfor %}
+      </tbody>
+    {% else %}
+      <thead><tr><th class="nosort" style="width:24px"></th><th>Received</th><th>From</th><th>Machine</th><th>Kind</th><th>Subject</th><th>Preview</th></tr></thead>
+      <tbody>
+      {% for d in rows %}
+      <tr data-href="/messages?box=inbox&open={{ d.id }}{{ mq }}{{ '&unread=true' if unread }}" class="{{ 'unread' if not d.read_at }} {{ 'sel' if opened and opened.id == d.id }}">
+        <td>{% if not d.read_at %}<span class="dot" title="Unread"></span>{% endif %}</td>
+        <td>{{ d.message.created_at|dt }}</td><td class="mono">{{ d.message.sender_address }}</td><td>{{ d.machine.name }}</td>
+        <td><span class="tag">{{ d.message.kind }}</span></td><td>{{ d.message.subject or '(no subject)' }}</td>
+        <td class="w100 hint">{{ d.message.body[:200] }}</td></tr>
+      {% else %}<tr class="empty"><td colspan="7">No messages.</td></tr>{% endfor %}
+      </tbody>
+    {% endif %}
+    </table>
+  </div>
+</section>
+
+{% if opened %}
+{% set msg = opened if sent else opened.message %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>Message</h2><span class="sub"><b>{{ msg.subject or '(no subject)' }}</b></span>
+    <span class="spacer"></span>
+    <div class="tools">
+      {% call ui.tasks() %}
+        <a href="/messages/compose?to={{ msg.sender_address|urlencode }}">Reply&hellip;</a>
+        {% if not sent %}
+        <form method="post" action="/messages/{{ opened.id }}/read">{{ ui.csrf_field() }}<button>{{ 'Mark as unread' if opened.read_at else 'Mark as read' }}</button></form>
+        {% endif %}
+      {% endcall %}
+    </div>
+  </div>
+  <dl class="props two">
+    <dt>From</dt><dd class="mono">{{ msg.sender_address }}</dd>
+    <dt>To</dt><dd class="mono">{{ msg.target }}</dd>
+    <dt>Kind</dt><dd><span class="tag">{{ msg.kind }}</span></dd>
+    <dt>{{ 'Sent' if sent else 'Received' }}</dt><dd>{{ msg.created_at|dt(True) }}</dd>
+    {% if sent %}
+    <dt>Recipients</dt><dd>{{ msg.deliveries|length }} machine(s)</dd>
+    <dt>Message ID</dt><dd>{{ msg.id }}</dd>
+    {% else %}
+    <dt>Delivered to</dt><dd class="mono">{{ opened.machine.address }}</dd>
+    <dt>Status</dt><dd>{% if opened.read_at %}<span class="st ok">Read {{ opened.read_at|dt }}</span>{% else %}<span class="st info">Unread</span>{% endif %}</dd>
+    <dt>Webhook</dt><dd>{{ ui.webhook_status(opened.webhook_status, opened.webhook_last_error) }}{% if opened.webhook_last_error %} <span class="hint">{{ opened.webhook_last_error }}</span>{% endif %}</dd>
+    <dt>Message ID</dt><dd>{{ msg.id }}</dd>
+    {% endif %}
+  </dl>
+  <div class="reading"><pre class="body">{{ msg.body }}</pre></div>
+</section>
+{% endif %}
+{% endblock %}

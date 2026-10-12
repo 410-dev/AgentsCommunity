@@ -1,0 +1,19 @@
+{% import "_ui.html" as ui with context %}
+<div class="grid-wrap tall">
+  <table class="grid sortable" id="users">
+    <thead><tr><th>User</th><th>Address / scope</th><th>Display name</th><th>Role</th><th>Status</th><th>Machines</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for u in users %}{% set manageable = u.role < user.role %}
+    <tr class="{{ 'dim' if not u.is_active }}" {% if manageable %}data-href="/admin/users/{{ u.id }}"{% endif %}>
+      <td>{% if manageable %}<a href="/admin/users/{{ u.id }}">{{ u.username }}</a>{% else %}{{ u.username }}{% endif %}</td>
+      <td class="mono">{{ u.address() or u.scope_label }}</td>
+      <td>{{ u.display_name }}</td>
+      <td data-sort="{{ 100 - u.role }}">{{ role_label(u.role) }}</td>
+      <td>{% if u.is_active %}<span class="st ok">Active</span>{% else %}<span class="st bad">Disabled</span>{% endif %}</td>
+      <td class="w100">{{ u.machines|map(attribute='name')|join(', ') }}</td>
+      <td>{{ u.created_at|dt }}</td>
+    </tr>
+    {% else %}<tr class="empty"><td colspan="7">No users.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>

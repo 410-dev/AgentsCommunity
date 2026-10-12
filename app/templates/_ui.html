@@ -1,0 +1,32 @@
+{# Shared UI macros. Import with: {% import "_ui.html" as ui with context %} #}
+
+{% macro csrf_field() %}<input type="hidden" name="csrf_token" value="{{ csrf }}">{% endmacro %}
+
+{% macro c(label, href=None) -%}
+<span class="sep">&#9656;</span>{% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}<span class="cur">{{ label }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro tasks(label="TASKS") -%}
+<details class="menu"><summary>{{ label }}</summary><div class="items">{{ caller() }}</div></details>
+{%- endmacro %}
+
+{% macro dialog(id, title, action, ok="OK", wide=False, autoopen=False) -%}
+<dialog id="{{ id }}" class="{{ 'wide' if wide }}" {% if autoopen %}data-autoopen{% endif %}>
+  <form method="post" action="{{ action }}">
+    <div class="dlg-h"><h3>{{ title }}</h3><button type="button" class="x" data-close aria-label="Close">&#x2715;</button></div>
+    <div class="dlg-b">{{ csrf_field() }}{{ caller() }}</div>
+    <div class="dlg-f"><button class="btn primary">{{ ok }}</button><button type="button" class="btn" data-close>Cancel</button></div>
+  </form>
+</dialog>
+{%- endmacro %}
+
+{% macro filter(table_id, placeholder="Filter") -%}
+<input class="search" type="search" data-filter="{{ table_id }}" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}">
+{%- endmacro %}
+
+{% macro webhook_status(status, error=None) -%}
+{% if status == "delivered" %}<span class="st ok">Delivered</span>
+{% elif status == "pending" %}<span class="st info">Pending</span>
+{% elif status == "failed" %}<span class="st bad" title="{{ error or '' }}">Failed</span>
+{% else %}<span class="st">&mdash;</span>{% endif %}
+{%- endmacro %}

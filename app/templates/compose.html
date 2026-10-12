@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Messages", "/messages") }}{{ ui.c("New message") }}{% endblock %}
+{% block content %}
+<div class="cols" style="grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr)">
+<section class="panel">
+  <div class="panel-h"><h2>New message</h2></div>
+  {% if not user.machines %}
+  <div class="panel-b"><div class="notice warn">You need at least one registered machine to send messages.&nbsp;<a href="/account">Register a machine</a></div></div>
+  {% else %}
+  <form method="post" action="/messages/compose">
+    {{ ui.csrf_field() }}
+    <div class="panel-b fgrid">
+      <label for="f-from">Send as</label>
+      <select id="f-from" name="machine_id">
+        {% for m in user.machines %}<option value="{{ m.id }}" {% if machine_id == m.id %}selected{% endif %}>{{ m.address }}</option>{% endfor %}
+      </select>
+      <label for="to">To</label>
+      <input id="to" name="to" value="{{ to or '' }}" required placeholder="id:machine@department:tenancy" class="mono" autofocus>
+      <span class="note">Quick fill:
+        <a href="#" data-to="{{ user.address('*') }}">My devices</a> &middot;
+        <a href="#" data-to="*:*@{{ user.department.name }}:{{ user.tenancy.name }}">My department</a> &middot;
+        <a href="#" data-to="*:*@*:{{ user.tenancy.name }}">My tenancy</a></span>
+      <label for="f-subj">Subject</label>
+      <input id="f-subj" name="subject" value="{{ subject or '' }}" maxlength="255">
+      <label for="f-body" class="top">Body</label>
+      <textarea id="f-body" name="body" rows="14" required>{{ body or '' }}</textarea>
+    </div>
+    <div class="form-foot"><button class="btn primary">Send</button><a class="btn" href="/messages">Cancel</a></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-h"><h2>Addressing</h2><span class="sub">{{ user.tenancy.name if user.tenancy else '' }}</span></div>
+  <table class="grid">
+    <thead><tr><th>Target</th><th>Pattern</th><th>Allowed</th></tr></thead>
+    <tbody>
+    {% if user.tenancy %}{% set t = user.tenancy %}
+      <tr><td>Machine</td><td class="mono">id:machine@dept:tenancy</td><td><span class="st ok">Everyone</span></td></tr>
+      <tr><td>User (all devices)</td><td class="mono">id:*@dept:tenancy</td><td><span class="st ok">Everyone</span></td></tr>
+      {% for label, pattern, value in [("My devices", "me:*@dept:tenancy", t.min_role_self_broadcast),
+                                       ("Department", "*:*@dept:tenancy", t.min_role_department_broadcast),
+                                       ("Tenancy", "*:*@*:tenancy", t.min_role_tenancy_broadcast)] %}
+      <tr><td>{{ label }}</td><td class="mono">{{ pattern }}</td>
+        <td>{% if value is none %}<span class="st bad">Disabled</span>{% elif user.role >= value %}<span class="st ok">{{ role_label(value) }}+</span>{% else %}<span class="st warn">{{ role_label(value) }}+</span>{% endif %}</td></tr>
+      {% endfor %}
+      <tr><td>Other tenancy (DM)</td><td class="mono">id:m@dept:other</td><td>{% if t.allow_cross_tenancy_dm %}<span class="st warn">If both allow</span>{% else %}<span class="st bad">Blocked</span>{% endif %}</td></tr>
+      <tr><td>All tenancies</td><td class="mono">*:*@*:*</td><td><span class="st bad">Never</span></td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</section>
+</div>
+<script>
+document.querySelectorAll('[data-to]').forEach(function (a) { a.addEventListener('click', function (e) {
+  e.preventDefault(); document.getElementById('to').value = a.dataset.to;
+}); });
+</script>
+{% endblock %}

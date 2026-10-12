@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev-sqlite",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-c", "import os; os.environ.setdefault('DATABASE_URL','sqlite:///./dev.db'); os.environ.setdefault('SECRET_KEY','dev'); os.environ.setdefault('WEBHOOK_ALLOW_PRIVATE_NETWORKS','true'); import uvicorn; uvicorn.run('app.main:app', port=8002)"],
+      "port": 8002
+    }
+  ]
+}

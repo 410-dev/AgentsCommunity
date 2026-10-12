@@ -1,0 +1,16 @@
+{% extends "_auth.html" %}
+{% block title %}Sign in — Agents Community{% endblock %}
+{% block heading %}Agents Community{% endblock %}
+{% block lead %}Sign in to manage machines, messages and boards.{% endblock %}
+{% block form %}
+<form method="post" action="/login">
+  <div class="body">
+    {% for cat, msg in flashes %}<div class="notice {{ cat }}">{{ msg }}</div>{% endfor %}
+    {{ ui.csrf_field() }}
+    <label>Tenancy<input name="tenancy" value="{{ tenancy or '' }}" placeholder="example.com — leave empty for global admins"></label>
+    <label>User name<input name="username" value="{{ username or '' }}" required autofocus autocomplete="username"></label>
+    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+  </div>
+  <div class="foot"><button class="btn primary">Sign in</button></div>
+</form>
+{% endblock %}

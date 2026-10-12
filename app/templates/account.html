@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Machines & Keys") }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>Machines</h2><span class="sub">{{ user.username }} | <b>{{ user.machines|length }}</b> total</span>
+    <span class="spacer"></span>
+    <div class="tools">
+      {% call ui.tasks() %}
+        {% if user.can_message %}<button type="button" data-open="dlg-machine">Register machine&hellip;</button>{% endif %}
+        <button type="button" data-open="dlg-password">Change password&hellip;</button>
+      {% endcall %}
+    </div>
+  </div>
+  {% if user.can_message %}
+  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-machine">Register machine&hellip;</button></div>
+  {% else %}
+  <div class="panel-tb"><span class="hint">This account is not in a department; machines cannot be registered.</span></div>
+  {% endif %}
+  <div class="grid-wrap tall">
+    <table class="grid sortable">
+      <thead><tr><th>Name</th><th>Address</th><th class="num">Active keys</th><th>Webhook</th><th class="num">Unread</th><th>Registered</th><th>Description</th></tr></thead>
+      <tbody>
+      {% for m in user.machines %}
+      <tr data-href="/machines/{{ m.id }}"><td><a href="/machines/{{ m.id }}">{{ m.name }}</a></td><td class="mono">{{ m.address }}</td>
+        <td class="num">{{ m.api_keys|selectattr('revoked_at', 'none')|list|length }}</td>
+        <td>{% if m.webhook_url %}<span class="st ok">Configured</span>{% else %}<span class="st">Not configured</span>{% endif %}</td>
+        <td class="num">{{ unread.get(m.id, 0) }}</td><td>{{ m.created_at|dt }}</td><td class="w100 hint">{{ m.description }}</td></tr>
+      {% else %}<tr class="empty"><td colspan="7">No machines registered.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-h"><h2>Account</h2><span class="sub">For <b>{{ user.username }}</b></span></div>
+  <dl class="props two">
+    <dt>User name</dt><dd>{{ user.username }}</dd>
+    <dt>Display name</dt><dd>{{ user.display_name or '—' }}</dd>
+    <dt>Role</dt><dd>{{ role_label(user.role) }}</dd>
+    <dt>Scope</dt><dd class="mono">{{ user.scope_label }}</dd>
+    <dt>Address pattern</dt><dd class="mono">{{ user.address('<machine>') or '— (no department)' }}</dd>
+    <dt>Created</dt><dd>{{ user.created_at|dt }}</dd>
+  </dl>
+</section>
+
+{% if user.can_message %}
+{% call ui.dialog("dlg-machine", "Register machine", "/machines", ok="Register") %}
+  <div class="lead">Register a machine</div>
+  <div class="fgrid">
+    <label for="m-name">Machine name</label><input id="m-name" name="name" required placeholder="laptop">
+    <span class="note">Lowercase letters, digits, '.', '_' or '-'. Address: <code>{{ user.address('<name>') }}</code></span>
+    <label for="m-desc">Description</label><input id="m-desc" name="description">
+  </div>
+{% endcall %}
+{% endif %}
+{% call ui.dialog("dlg-password", "Change password", "/account/password", ok="Change") %}
+  <div class="fgrid">
+    <label for="p-cur">Current password</label><input id="p-cur" type="password" name="current" required autocomplete="current-password">
+    <label for="p-new">New password</label><input id="p-new" type="password" name="new" required minlength="8" autocomplete="new-password">
+    <label for="p-new2">Confirm</label><input id="p-new2" type="password" name="new2" required minlength="8" autocomplete="new-password">
+  </div>
+{% endcall %}
+{% endblock %}

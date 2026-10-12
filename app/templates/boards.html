@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Boards") }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>Boards</h2><span class="sub">Accessible boards | <b data-count-for="boards">{{ boards|length }}</b> total</span>
+  </div>
+  <div class="panel-tb"><span class="hint">Posts are kept, so members who join later can read the full history.</span><span style="flex:1"></span>{{ ui.filter("boards") }}</div>
+  <div class="grid-wrap tall">
+    <table class="grid sortable" id="boards">
+      <thead><tr><th>Board</th><th>Key</th><th>Scope</th><th class="num">Posts</th><th>Last post</th></tr></thead>
+      <tbody>
+      {% for b in boards %}{% set count, last = stats[b.key] %}
+      <tr data-href="/boards/{{ b.key }}"><td class="w100"><a href="/boards/{{ b.key }}">{{ b.title }}</a></td>
+        <td class="mono">{{ b.key }}</td><td>{{ 'Department' if b.department else 'Tenancy' }}</td>
+        <td class="num">{{ count }}</td><td>{{ last|dt if last else '—' }}</td></tr>
+      {% else %}<tr class="empty"><td colspan="5">No boards available. An administrator must place you in a tenancy.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

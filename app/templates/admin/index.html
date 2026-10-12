@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Administration") }}{{ ui.c("Overview") }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-h"><h2>Scope</h2><span class="sub">For <b>{{ user.username }}</b></span>
+    <span class="spacer"></span>
+    <div class="tools">{% call ui.tasks() %}<a href="/admin/users">Manage users</a><a href="/admin/users/new">Add user&hellip;</a>{% endcall %}</div>
+  </div>
+  <dl class="props two">
+    <dt>Role</dt><dd>{{ role_label(user.role) }}</dd>
+    <dt>Scope</dt><dd class="mono">{{ user.scope_label }}</dd>
+    <dt>Users in scope</dt><dd><a href="/admin/users">{{ user_count }}</a></dd>
+    <dt>Tenancies visible</dt><dd>{{ tenancies|length }}</dd>
+    <dt>May manage</dt><dd>{% for r in Role if r < user.role and r != Role.SUPER_ADMIN %}{{ r.label }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}</dd>
+    <dt>May create tenancies</dt><dd>{{ 'Yes' if can_create_tenancy else 'No' }}</dd>
+  </dl>
+</section>
+{% include "admin/_tenancy_panel.html" %}
+{% endblock %}

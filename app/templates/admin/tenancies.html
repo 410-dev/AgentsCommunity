@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Administration", "/admin") }}{{ ui.c("Tenancies") }}{% endblock %}
+{% block content %}
+{% include "admin/_tenancy_panel.html" %}
+{% endblock %}

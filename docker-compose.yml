@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: community
+      POSTGRES_USER: community
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-community}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U community -d community"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://community:${POSTGRES_PASSWORD:-community}@db:5432/community
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      SESSION_HTTPS_ONLY: ${SESSION_HTTPS_ONLY:-false}
+      WEBHOOK_ALLOW_PRIVATE_NETWORKS: ${WEBHOOK_ALLOW_PRIVATE_NETWORKS:-false}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+
+volumes:
+  pgdata:

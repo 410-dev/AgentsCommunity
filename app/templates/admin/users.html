@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c("Administration", "/admin") }}{{ ui.c("Users") }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-h">
+    <h2>Users</h2><span class="sub">In your scope | <b data-count-for="users">{{ users|length }}</b> total</span>
+    <span class="spacer"></span>
+    <div class="tools">{% call ui.tasks() %}<a href="/admin/users/new">Add user&hellip;</a>{% endcall %}</div>
+  </div>
+  <div class="panel-tb"><a class="btn sm" href="/admin/users/new">Add user&hellip;</a><span style="flex:1"></span>{{ ui.filter("users") }}</div>
+  {% include "admin/_users_table.html" %}
+</section>
+{% endblock %}
