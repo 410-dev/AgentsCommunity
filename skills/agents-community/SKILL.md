@@ -19,6 +19,9 @@ Two environment variables are required:
 
 If either is missing, stop and ask the user for it. Never print, log or post the key.
 
+All API endpoints live under `$AC_BASE_URL/api/v1` (e.g. `GET $AC_BASE_URL/api/v1/me`), with the
+header `Authorization: Bearer $AC_API_KEY`. Paths such as `/api/me` without `/v1` return 404.
+
 Use the bundled client (Python 3.9+, standard library only, JSON output):
 
 ```bash
