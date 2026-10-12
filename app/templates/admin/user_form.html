@@ -1,58 +1,58 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c("Administration", "/admin") }}{{ ui.c("Users", "/admin/users") }}{{ ui.c(target.username if target else "New user") }}{% endblock %}
+{% block crumb %}{{ ui.c(_("Administration"), "/admin") }}{{ ui.c(_("Users"), "/admin/users") }}{{ ui.c(target.username if target else _("New user")) }}{% endblock %}
 {% block content %}
 {% if not placements %}
-<div class="notice warn">There is nowhere to place users yet. Create a tenancy and a department first.</div>
+<div class="notice warn">{{ _("There is nowhere to place users yet. Create a tenancy and a department first.") }}</div>
 {% endif %}
 <div class="cols">
 <section class="panel">
-  <div class="panel-h"><h2>{{ 'Properties' if target else 'New user' }}</h2>{% if target %}<span class="sub">For <b>{{ target.address() or target.username }}</b></span>{% endif %}</div>
+  <div class="panel-h"><h2>{{ _('Properties') if target else _('New user') }}</h2>{% if target %}<span class="sub">{{ _("For") }} <b>{{ target.address() or target.username }}</b></span>{% endif %}</div>
   <form method="post" action="{{ '/admin/users/' ~ target.id if target else '/admin/users' }}">
     {{ ui.csrf_field() }}
     <div class="panel-b fgrid">
-      <label for="u-name">User name (id)</label>
+      <label for="u-name">{{ _("User name (id)") }}</label>
       <input id="u-name" name="username" value="{{ form.username or '' }}" class="mono" {% if target %}disabled{% else %}required autofocus{% endif %}>
-      {% if not target %}<span class="note">Lowercase letters, digits, '.', '_' or '-'. Unique within the tenancy.</span>{% endif %}
-      <label for="u-disp">Display name</label><input id="u-disp" name="display_name" value="{{ form.display_name or '' }}">
-      {% if not target %}<label for="u-pw">Initial password</label><input id="u-pw" type="password" name="password" required minlength="8" autocomplete="new-password">{% endif %}
-      <label for="u-role">Role</label>
+      {% if not target %}<span class="note">{{ _("Lowercase letters, digits, '.', '_' or '-'.") }} {{ _("Unique within the tenancy.") }}</span>{% endif %}
+      <label for="u-disp">{{ _("Display name") }}</label><input id="u-disp" name="display_name" value="{{ form.display_name or '' }}">
+      {% if not target %}<label for="u-pw">{{ _("Initial password") }}</label><input id="u-pw" type="password" name="password" required minlength="8" autocomplete="new-password">{% endif %}
+      <label for="u-role">{{ _("Role") }}</label>
       <select id="u-role" name="role">
-        {% for r in roles %}<option value="{{ r.value }}" {% if form.role == r.value %}selected{% endif %}>{{ r.label }}</option>{% endfor %}
+        {% for r in roles %}<option value="{{ r.value }}" {% if form.role == r.value %}selected{% endif %}>{{ _(r.label) }}</option>{% endfor %}
       </select>
-      <label for="u-place">Placement</label>
+      <label for="u-place">{{ _("Placement") }}</label>
       <select id="u-place" name="placement" class="mono">
-        {% for value, label in placements %}<option value="{{ value }}" {% if form.placement == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        {% for value, name, suffix in placements %}<option value="{{ value }}" {% if form.placement == value %}selected{% endif %}>{{ name }}{{ (' ' if name else '') ~ _(suffix) if suffix }}</option>{% endfor %}
       </select>
-      <span class="note">Users and Department Moderators need a department. Tenancy Moderators need a tenancy (a department is required for an address). Admins may be global.</span>
+      <span class="note">{{ _("Users and Department Moderators need a department. Tenancy Moderators need a tenancy (a department is required for an address). Admins may be global.") }}</span>
       {% if target %}
-      <span></span><label class="chk"><input type="checkbox" name="is_active" value="true" {% if form.is_active %}checked{% endif %}>Account enabled</label>
-      <span class="note">Disabled accounts cannot sign in and their API keys stop working.</span>
+      <span></span><label class="chk"><input type="checkbox" name="is_active" value="true" {% if form.is_active %}checked{% endif %}>{{ _("Account enabled") }}</label>
+      <span class="note">{{ _("Disabled accounts cannot sign in and their API keys stop working.") }}</span>
       {% endif %}
     </div>
-    <div class="form-foot"><button class="btn primary">{{ 'Apply' if target else 'Create' }}</button><a class="btn" href="/admin/users">Cancel</a></div>
+    <div class="form-foot"><button class="btn primary">{{ _('Apply') if target else _('Create') }}</button><a class="btn" href="/admin/users">{{ _("Cancel") }}</a></div>
   </form>
 </section>
 
 {% if target %}
 <div style="display:grid;gap:16px;align-content:start">
 <section class="panel">
-  <div class="panel-h"><h2>Reset password</h2></div>
+  <div class="panel-h"><h2>{{ _("Reset password") }}</h2></div>
   <form method="post" action="/admin/users/{{ target.id }}/password">
     {{ ui.csrf_field() }}
     <div class="panel-b fgrid">
-      <label for="r-pw">New password</label><input id="r-pw" type="password" name="password" required minlength="8" autocomplete="new-password">
+      <label for="r-pw">{{ _("New password") }}</label><input id="r-pw" type="password" name="password" required minlength="8" autocomplete="new-password">
     </div>
-    <div class="form-foot"><button class="btn">Reset password</button></div>
+    <div class="form-foot"><button class="btn">{{ _("Reset password") }}</button></div>
   </form>
 </section>
 <section class="panel">
-  <div class="panel-h"><h2>Machines</h2><span class="sub"><b>{{ target.machines|length }}</b> total</span></div>
+  <div class="panel-h"><h2>{{ _("Machines") }}</h2><span class="sub">{{ ui.count(_("Total"), target.machines|length) }}</span></div>
   <table class="grid">
-    <thead><tr><th>Name</th><th>Address</th><th>Registered</th></tr></thead>
+    <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Address") }}</th><th>{{ _("Registered") }}</th></tr></thead>
     <tbody>
     {% for m in target.machines %}<tr><td>{{ m.name }}</td><td class="mono w100">{{ m.address }}</td><td>{{ m.created_at|dt }}</td></tr>
-    {% else %}<tr class="empty"><td colspan="3">No machines.</td></tr>{% endfor %}
+    {% else %}<tr class="empty"><td colspan="3">{{ _("No machines.") }}</td></tr>{% endfor %}
     </tbody>
   </table>
 </section>

@@ -1,11 +1,12 @@
 {% extends "base.html" %}
-{% block crumb %}{{ ui.c("Error " ~ status) }}{% endblock %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c(_("Error") ~ " " ~ status) }}{% endblock %}
 {% block content %}
 <section class="panel">
-  <div class="panel-h"><h2>Error {{ status }}</h2></div>
+  <div class="panel-h"><h2>{{ _("Error") }} {{ status }}</h2></div>
   <div class="panel-b">
-    <div class="notice error">{{ detail }}</div>
-    <p><a class="btn" href="/">Go to Dashboard</a></p>
+    <div class="notice error">{{ _(detail) }}</div>
+    <p><a class="btn" href="/">{{ _("Go to Dashboard") }}</a></p>
   </div>
 </section>
 {% endblock %}

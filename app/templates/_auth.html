@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block shell %}
 <div class="auth">
   <div class="auth-card">
@@ -8,5 +9,6 @@
     </div>
     {% block form %}{% endblock %}
   </div>
+  <div class="auth-lang">{{ ui.lang_switch() }}</div>
 </div>
 {% endblock %}

@@ -6,27 +6,39 @@
 <span class="sep">&#9656;</span>{% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}<span class="cur">{{ label }}</span>{% endif %}
 {%- endmacro %}
 
-{% macro tasks(label="TASKS") -%}
-<details class="menu"><summary>{{ label }}</summary><div class="items">{{ caller() }}</div></details>
+{% macro tasks(label=None) -%}
+<details class="menu"><summary>{{ label or _("TASKS") }}</summary><div class="items">{{ caller() }}</div></details>
 {%- endmacro %}
 
-{% macro dialog(id, title, action, ok="OK", wide=False, autoopen=False) -%}
+{% macro dialog(id, title, action, ok=None, wide=False, autoopen=False) -%}
 <dialog id="{{ id }}" class="{{ 'wide' if wide }}" {% if autoopen %}data-autoopen{% endif %}>
   <form method="post" action="{{ action }}">
-    <div class="dlg-h"><h3>{{ title }}</h3><button type="button" class="x" data-close aria-label="Close">&#x2715;</button></div>
+    <div class="dlg-h"><h3>{{ title }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
     <div class="dlg-b">{{ csrf_field() }}{{ caller() }}</div>
-    <div class="dlg-f"><button class="btn primary">{{ ok }}</button><button type="button" class="btn" data-close>Cancel</button></div>
+    <div class="dlg-f"><button class="btn primary">{{ ok or _("OK") }}</button><button type="button" class="btn" data-close>{{ _("Cancel") }}</button></div>
   </form>
 </dialog>
 {%- endmacro %}
 
-{% macro filter(table_id, placeholder="Filter") -%}
-<input class="search" type="search" data-filter="{{ table_id }}" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}">
+{% macro filter(table_id, placeholder=None) -%}
+<input class="search" type="search" data-filter="{{ table_id }}" placeholder="{{ placeholder or _('Filter') }}" aria-label="{{ placeholder or _('Filter') }}">
+{%- endmacro %}
+
+{% macro count(label, n, id=None) -%}
+{{ label }}: <b {% if id %}data-count-for="{{ id }}"{% endif %}>{{ n }}</b>
 {%- endmacro %}
 
 {% macro webhook_status(status, error=None) -%}
-{% if status == "delivered" %}<span class="st ok">Delivered</span>
-{% elif status == "pending" %}<span class="st info">Pending</span>
-{% elif status == "failed" %}<span class="st bad" title="{{ error or '' }}">Failed</span>
+{% if status == "delivered" %}<span class="st ok">{{ _("Delivered") }}</span>
+{% elif status == "pending" %}<span class="st info">{{ _("Pending") }}</span>
+{% elif status == "failed" %}<span class="st bad" title="{{ error or '' }}">{{ _("Failed") }}</span>
 {% else %}<span class="st">&mdash;</span>{% endif %}
+{%- endmacro %}
+
+{% macro board_title(b) -%}
+{% if b.department %}{{ b.department.name }} @ {{ b.tenancy.name }}{% else %}{{ b.tenancy.name }} {{ _("(all)") }}{% endif %}
+{%- endmacro %}
+
+{% macro lang_switch() -%}
+{% for code, name in languages.items() if code != lang %}<a href="/lang/{{ code }}?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}" lang="{{ code }}">{{ name }}</a>{% endfor %}
 {%- endmacro %}

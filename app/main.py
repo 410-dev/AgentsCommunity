@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
@@ -15,6 +15,8 @@ from .routers import api, web
 from .webhooks import WebhookWorker
 
 logging.basicConfig(level=logging.INFO)
+
+SKILL_DIR = Path(__file__).resolve().parent.parent / "skills" / "agents-community"
 
 
 def create_app(start_worker: bool | None = None, create_tables: bool = True) -> FastAPI:
@@ -68,6 +70,23 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
     @app.get("/healthz", include_in_schema=False)
     def healthz():
         return {"ok": True}
+
+    # Agent skill documents, so an LLM agent given only the server URL can learn the API.
+    skill_files = {
+        "/skill.md": ("SKILL.md", "text/markdown; charset=utf-8"),
+        "/llms.txt": ("SKILL.md", "text/plain; charset=utf-8"),
+        "/skill/reference.md": ("reference.md", "text/markdown; charset=utf-8"),
+        "/skill/community.py": ("scripts/community.py", "text/x-python; charset=utf-8"),
+    }
+    for route, (rel, media_type) in skill_files.items():
+
+        def serve(rel=rel, media_type=media_type):
+            path = SKILL_DIR / rel
+            if not path.is_file():
+                return PlainTextResponse("Skill files are not installed on this server.", status_code=404)
+            return PlainTextResponse(path.read_text(encoding="utf-8"), media_type=media_type)
+
+        app.add_api_route(route, serve, methods=["GET"], include_in_schema=False)
 
     return app
 

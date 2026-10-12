@@ -24,10 +24,14 @@ WILD = "*"
 
 
 class MessagingError(Exception):
-    def __init__(self, status: int, detail: str):
-        super().__init__(detail)
+    """`template` is an English message with {placeholders}; `detail` is the formatted text."""
+
+    def __init__(self, status: int, template: str, **params):
         self.status = status
-        self.detail = detail
+        self.template = template
+        self.params = params
+        self.detail = template.format(**params)
+        super().__init__(self.detail)
 
 
 @dataclass(frozen=True)
@@ -48,9 +52,9 @@ def parse_address(raw: str) -> Address:
     addr = Address(*m.groups())
     for part in (addr.user, addr.machine, addr.department):
         if part != WILD and not valid_name(part):
-            raise MessagingError(400, f"Invalid address segment: {part!r}")
+            raise MessagingError(400, "Invalid address segment: {part}", part=repr(part))
     if addr.tenancy != WILD and not valid_tenancy_name(addr.tenancy):
-        raise MessagingError(400, f"Invalid tenancy: {addr.tenancy!r}")
+        raise MessagingError(400, "Invalid tenancy: {tenancy}", tenancy=repr(addr.tenancy))
     return addr
 
 
@@ -70,13 +74,23 @@ def classify(addr: Address) -> str:
     return "direct"
 
 
+_POLICY_DISABLED = {
+    "Tenancy": "Tenancy broadcasts are disabled by tenancy policy.",
+    "Department": "Department broadcasts are disabled by tenancy policy.",
+    "Own-device": "Own-device broadcasts are disabled by tenancy policy.",
+}
+_POLICY_ROLE = {
+    "Tenancy": "Tenancy broadcasts require at least {role} in this tenancy.",
+    "Department": "Department broadcasts require at least {role} in this tenancy.",
+    "Own-device": "Own-device broadcasts require at least {role} in this tenancy.",
+}
+
+
 def _check_policy(sender: User, min_role: int | None, scope: str) -> None:
     if min_role is None:
-        raise MessagingError(403, f"{scope} broadcasts are disabled by tenancy policy.")
+        raise MessagingError(403, _POLICY_DISABLED[scope])
     if sender.role < min_role:
-        raise MessagingError(
-            403, f"{scope} broadcasts require at least {role_label(min_role)} in this tenancy."
-        )
+        raise MessagingError(403, _POLICY_ROLE[scope], role=role_label(min_role))
 
 
 def _active_machines(db: Session, *conditions) -> list[Machine]:
@@ -94,7 +108,7 @@ def resolve_recipients(
 
     tenancy = db.scalar(select(Tenancy).where(Tenancy.name == addr.tenancy))
     if tenancy is None:
-        raise MessagingError(404, f"Unknown tenancy: {addr.tenancy}")
+        raise MessagingError(404, "Unknown tenancy: {name}", name=addr.tenancy)
     same_tenancy = tenancy.id == sender.tenancy_id
 
     department = None
@@ -105,7 +119,7 @@ def resolve_recipients(
             )
         )
         if department is None:
-            raise MessagingError(404, f"Unknown department: {addr.department}:{addr.tenancy}")
+            raise MessagingError(404, "Unknown department: {name}", name=f"{addr.department}:{addr.tenancy}")
 
     if kind == "tenancy":
         if not same_tenancy and sender.role < Role.ADMIN:
@@ -131,7 +145,7 @@ def resolve_recipients(
             )
         )
         if target_user is None:
-            raise MessagingError(404, f"Unknown user: {addr.user}@{addr.department}:{addr.tenancy}")
+            raise MessagingError(404, "Unknown user: {name}", name=f"{addr.user}@{addr.department}:{addr.tenancy}")
         if not same_tenancy:
             if not (tenancy.allow_cross_tenancy_dm and sender.tenancy.allow_cross_tenancy_dm):
                 raise MessagingError(403, "Cross-tenancy messages are not allowed by policy.")
@@ -143,7 +157,7 @@ def resolve_recipients(
         else:
             machine = next((m for m in target_user.machines if m.name == addr.machine), None)
             if machine is None:
-                raise MessagingError(404, f"Unknown machine: {addr}")
+                raise MessagingError(404, "Unknown machine: {name}", name=str(addr))
             return kind, [machine]
 
     # Broadcasts never echo back to the sending machine.

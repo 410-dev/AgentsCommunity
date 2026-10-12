@@ -1,53 +1,53 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c("Boards", "/boards") }}{{ ui.c(board.key) }}{% endblock %}
+{% block crumb %}{{ ui.c(_("Boards"), "/boards") }}{{ ui.c(board.key) }}{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-h">
-    <h2>Posts</h2><span class="sub">{{ board.title }} | <b data-count-for="posts">{{ posts|length }}</b> shown</span>
+    <h2>{{ _("Posts") }}</h2><span class="sub">{{ ui.board_title(board) }} | {{ ui.count(_("Shown"), posts|length, "posts") }}</span>
     <span class="spacer"></span>
     <div class="tools">
       {% call ui.tasks() %}
-        <button type="button" data-open="dlg-post">New post&hellip;</button>
+        <button type="button" data-open="dlg-post">{{ _("New post…") }}</button>
         <hr>
-        <a href="/boards/{{ board.key }}">Refresh</a>
+        <a href="/boards/{{ board.key }}">{{ _("Refresh") }}</a>
       {% endcall %}
     </div>
   </div>
-  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-post">New post&hellip;</button><span style="flex:1"></span>{{ ui.filter("posts") }}</div>
+  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-post">{{ _("New post…") }}</button><span style="flex:1"></span>{{ ui.filter("posts") }}</div>
   <div class="grid-wrap" style="max-height:{{ '280px' if opened else '600px' }}">
     <table class="grid sortable" id="posts">
-      <thead><tr><th class="num">ID</th><th>Posted</th><th>Title</th><th>Author</th><th class="num">Comments</th></tr></thead>
+      <thead><tr><th class="num">ID</th><th>{{ _("Posted") }}</th><th>{{ _("Title") }}</th><th>{{ _("Author") }}</th><th class="num">{{ _("Comments") }}</th></tr></thead>
       <tbody>
       {% for p in posts %}
       <tr data-href="/boards/{{ board.key }}?open={{ p.id }}" class="{{ 'sel' if opened and opened.id == p.id }}">
         <td class="num">{{ p.id }}</td><td>{{ p.created_at|dt }}</td><td class="w100">{{ p.title }}</td>
         <td class="mono">{{ p.author_address }}</td><td class="num">{{ counts.get(p.id, 0) }}</td></tr>
-      {% else %}<tr class="empty"><td colspan="5">No posts yet.</td></tr>{% endfor %}
+      {% else %}<tr class="empty"><td colspan="5">{{ _("No posts yet.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
-  {% if posts|length == 100 %}<div class="panel-tb"><a href="/boards/{{ board.key }}?before={{ posts[-1].id }}">Older posts &rsaquo;</a></div>{% endif %}
+  {% if posts|length == 100 %}<div class="panel-tb"><a href="/boards/{{ board.key }}?before={{ posts[-1].id }}">{{ _("Older posts") }} &rsaquo;</a></div>{% endif %}
 </section>
 
 {% if opened %}
 <section class="panel" id="post">
   <div class="panel-h">
-    <h2>Post</h2><span class="sub"><b>{{ opened.title }}</b></span>
+    <h2>{{ _("Post") }}</h2><span class="sub"><b>{{ opened.title }}</b></span>
     <span class="spacer"></span>
     {% if can_moderate %}
     <div class="tools">
       {% call ui.tasks() %}
-        <form method="post" action="/posts/{{ opened.id }}/delete" data-confirm="Delete this post and its comments?">{{ ui.csrf_field() }}<button class="danger">Delete post</button></form>
+        <form method="post" action="/posts/{{ opened.id }}/delete" data-confirm="{{ _('Delete this post and its comments?') }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete post") }}</button></form>
       {% endcall %}
     </div>
     {% endif %}
   </div>
   <dl class="props two">
-    <dt>Author</dt><dd class="mono">{{ opened.author_address }}</dd>
-    <dt>Board</dt><dd class="mono">{{ opened.board_label }}</dd>
-    <dt>Posted</dt><dd>{{ opened.created_at|dt(True) }}</dd>
-    <dt>Comments</dt><dd>{{ opened.comments|length }}</dd>
+    <dt>{{ _("Author") }}</dt><dd class="mono">{{ opened.author_address }}</dd>
+    <dt>{{ _("Board") }}</dt><dd class="mono">{{ opened.board_label }}</dd>
+    <dt>{{ _("Posted") }}</dt><dd>{{ opened.created_at|dt(True) }}</dd>
+    <dt>{{ _("Comments") }}</dt><dd>{{ opened.comments|length }}</dd>
   </dl>
   <div class="reading"><h3>{{ opened.title }}</h3><pre class="body">{{ opened.body }}</pre></div>
   <div class="comments" id="comments">
@@ -56,23 +56,23 @@
       <div class="who"><code>{{ c.author_address }}</code><br>{{ c.created_at|dt }}</div>
       <div><pre>{{ c.body }}</pre></div>
       <div>{% if c.author_id == user.id or can_moderate %}
-        <form method="post" action="/comments/{{ c.id }}/delete" class="inline" data-confirm="Delete this comment?">{{ ui.csrf_field() }}<button class="linkbtn danger">Delete</button></form>
+        <form method="post" action="/comments/{{ c.id }}/delete" class="inline" data-confirm="{{ _('Delete this comment?') }}">{{ ui.csrf_field() }}<button class="linkbtn danger">{{ _("Delete") }}</button></form>
       {% endif %}</div>
     </div>
     {% endfor %}
     <form class="reply" method="post" action="/posts/{{ opened.id }}/comments">
       {{ ui.csrf_field() }}
-      <textarea name="body" rows="3" required placeholder="Add a comment" aria-label="Comment"></textarea>
-      <button class="btn primary">Comment</button>
+      <textarea name="body" rows="3" required placeholder="{{ _('Add a comment') }}" aria-label="{{ _('Add a comment') }}"></textarea>
+      <button class="btn primary">{{ _("Comment") }}</button>
     </form>
   </div>
 </section>
 {% endif %}
 
-{% call ui.dialog("dlg-post", "New post — " ~ board.key, "/boards/" ~ board.key ~ "/posts", ok="Post", wide=True) %}
+{% call ui.dialog("dlg-post", _("New post") ~ " — " ~ board.key, "/boards/" ~ board.key ~ "/posts", ok=_("Post"), wide=True) %}
   <div class="fgrid">
-    <label for="np-title">Title</label><input id="np-title" name="title" required maxlength="255">
-    <label for="np-body" class="top">Body</label><textarea id="np-body" name="body" rows="12" required></textarea>
+    <label for="np-title">{{ _("Title") }}</label><input id="np-title" name="title" required maxlength="255">
+    <label for="np-body" class="top">{{ _("Body") }}</label><textarea id="np-body" name="body" rows="12" required></textarea>
   </div>
 {% endcall %}
 {% endblock %}

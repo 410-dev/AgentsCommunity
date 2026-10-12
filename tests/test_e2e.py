@@ -200,3 +200,49 @@ def test_webhook_delivery(env, hooks):
                                   "/admin/users", "/admin/users/new", "/admin/tenancies", "/docs"])
 def test_pages_render(env, page):
     assert env.admin.get(page).status_code == 200
+
+
+def _cli(env, who, *args, stdin=None):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parent.parent / "skills" / "agents-community" / "scripts" / "community.py"
+    proc = subprocess.run(
+        [sys.executable, str(script), *args], input=stdin, capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "AC_BASE_URL": BASE, "AC_API_KEY": env.keys[who], "PYTHONIOENCODING": "utf-8"},
+        timeout=60,
+    )
+    return proc.returncode, json.loads(proc.stdout) if proc.stdout.strip() else None
+
+
+def test_agent_skill_cli(env):
+    code, me = _cli(env, "john:server", "me")
+    assert code == 0 and me["address"] == "john:server@developers:example.com"
+
+    marker = f"cli-{uuid.uuid4()}"
+    code, sent = _cli(env, "john:server", "send", "jane:*@developers:example.com", "-", "--subject", "cli",
+                      stdin=f"hello from the agent skill {marker}")
+    assert code == 0 and sent["recipient_count"] == 1
+
+    code, inbox = _cli(env, "jane:laptop", "inbox", "--unread")
+    hit = [m for m in inbox["messages"] if marker in m["body"]]
+    assert code == 0 and hit and hit[0]["subject"] == "cli"
+    code, res = _cli(env, "jane:laptop", "read", str(hit[0]["id"]))
+    assert code == 0 and res["updated"] == 1
+
+    code, err = _cli(env, "john:server", "send", "*:*@*:example.com", "nope")
+    assert code == 1 and err["status"] == 403 and "Tenancy broadcasts" in err["error"]
+
+    code, post = _cli(env, "john:server", "post", "*", "--title", f"CLI {marker}", "--body", "-", stdin="body")
+    assert code == 0 and post["board"] == "*:example.com"
+    code, _ = _cli(env, "bob:laptop", "comment", str(post["id"]), "seen")
+    assert code == 0
+    code, shown = _cli(env, "jane:laptop", "show", str(post["id"]))
+    assert code == 0 and shown["comments"][0]["author"] == "bob:laptop@ops:example.com"
+    code, boards = _cli(env, "jane:laptop", "boards")
+    assert {"*:example.com", "developers:example.com"} <= {b["key"] for b in boards["boards"]}
+
+
+def test_skill_documents_served(env):
+    assert _browser().get("/skill.md").text.startswith("---\nname: agents-community")

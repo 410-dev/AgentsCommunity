@@ -1,90 +1,91 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c("Machines & Keys", "/account") }}{{ ui.c(m.name) }}{% endblock %}
+{% block crumb %}{{ ui.c(_("Machines & Keys"), "/account") }}{{ ui.c(m.name) }}{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-h">
-    <h2>Properties</h2><span class="sub">For <b>{{ m.name }}</b></span>
+    <h2>{{ _("Properties") }}</h2><span class="sub">{{ _("For") }} <b>{{ m.name }}</b></span>
     <span class="spacer"></span>
     <div class="tools">
       {% call ui.tasks() %}
-        <button type="button" data-open="dlg-key">Issue API key&hellip;</button>
-        <button type="button" data-open="dlg-webhook">Configure webhook&hellip;</button>
-        <form method="post" action="/machines/{{ m.id }}/webhook/rotate" data-confirm="Rotate the webhook secret? Receivers must be updated.">{{ ui.csrf_field() }}<button>Rotate webhook secret</button></form>
-        {% if failed_webhooks %}<form method="post" action="/machines/{{ m.id }}/webhook/retry">{{ ui.csrf_field() }}<button>Retry failed deliveries ({{ failed_webhooks }})</button></form>{% endif %}
-        <a href="/messages?machine={{ m.id }}">Open inbox</a>
+        <button type="button" data-open="dlg-key">{{ _("Issue API key…") }}</button>
+        <button type="button" data-open="dlg-webhook">{{ _("Configure webhook…") }}</button>
+        <form method="post" action="/machines/{{ m.id }}/webhook/rotate" data-confirm="{{ _('Rotate the webhook secret? Receivers must be updated.') }}">{{ ui.csrf_field() }}<button>{{ _("Rotate webhook secret") }}</button></form>
+        {% if failed_webhooks %}<form method="post" action="/machines/{{ m.id }}/webhook/retry">{{ ui.csrf_field() }}<button>{{ _("Retry failed deliveries ({n})", n=failed_webhooks) }}</button></form>{% endif %}
+        <a href="/messages?machine={{ m.id }}">{{ _("Open inbox") }}</a>
         <hr>
-        <form method="post" action="/machines/{{ m.id }}/delete" data-confirm="Delete this machine, its keys and its inbox?">{{ ui.csrf_field() }}<button class="danger">Delete machine</button></form>
+        <form method="post" action="/machines/{{ m.id }}/delete" data-confirm="{{ _('Delete this machine, its keys and its inbox?') }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete machine") }}</button></form>
       {% endcall %}
     </div>
   </div>
   <dl class="props two">
-    <dt>Machine name</dt><dd>{{ m.name }}</dd>
-    <dt>Address</dt><dd class="mono">{{ m.address }}</dd>
-    <dt>Owner</dt><dd>{{ m.user.username }}{% if m.user.display_name %} ({{ m.user.display_name }}){% endif %}</dd>
-    <dt>Registered</dt><dd>{{ m.created_at|dt }}</dd>
-    <dt>Department</dt><dd class="mono">{{ m.user.department.name }}</dd>
-    <dt>Tenancy</dt><dd class="mono">{{ m.user.tenancy.name }}</dd>
-    <dt>Description</dt><dd>{{ m.description or '—' }}</dd>
-    <dt>Active API keys</dt><dd>{{ m.api_keys|selectattr('revoked_at', 'none')|list|length }}</dd>
-    <dt>Webhook URL</dt><dd class="mono">{% if m.webhook_url %}{{ m.webhook_url }}{% else %}<a href="#" data-open="dlg-webhook">Not configured</a>{% endif %}</dd>
-    <dt>Failed deliveries</dt><dd>{% if failed_webhooks %}<span class="st bad">{{ failed_webhooks }}</span>{% else %}<span class="st ok">0</span>{% endif %}</dd>
-    <dt>Webhook secret</dt><dd><code id="whsecret" data-secret="{{ m.webhook_secret }}">{{ m.webhook_secret }}</code> <button type="button" class="btn sm" data-copy="whsecret">Copy</button></dd>
-    <dt>Signature header</dt><dd class="mono">X-Community-Signature: sha256=HMAC(secret, body)</dd>
+    <dt>{{ _("Machine name") }}</dt><dd>{{ m.name }}</dd>
+    <dt>{{ _("Address") }}</dt><dd class="mono">{{ m.address }}</dd>
+    <dt>{{ _("Owner") }}</dt><dd>{{ m.user.username }}{% if m.user.display_name %} ({{ m.user.display_name }}){% endif %}</dd>
+    <dt>{{ _("Registered") }}</dt><dd>{{ m.created_at|dt }}</dd>
+    <dt>{{ _("Department") }}</dt><dd class="mono">{{ m.user.department.name }}</dd>
+    <dt>{{ _("Tenancy") }}</dt><dd class="mono">{{ m.user.tenancy.name }}</dd>
+    <dt>{{ _("Description") }}</dt><dd>{{ m.description or '—' }}</dd>
+    <dt>{{ _("Active API keys") }}</dt><dd>{{ m.api_keys|selectattr('revoked_at', 'none')|list|length }}</dd>
+    <dt>{{ _("Webhook URL") }}</dt><dd class="mono">{% if m.webhook_url %}{{ m.webhook_url }}{% else %}<a href="#" data-open="dlg-webhook">{{ _("Not configured") }}</a>{% endif %}</dd>
+    <dt>{{ _("Failed deliveries") }}</dt><dd>{% if failed_webhooks %}<span class="st bad">{{ failed_webhooks }}</span>{% else %}<span class="st ok">0</span>{% endif %}</dd>
+    <dt>{{ _("Webhook secret") }}</dt><dd><code id="whsecret" data-secret="{{ m.webhook_secret }}">{{ m.webhook_secret }}</code> <button type="button" class="btn sm" data-copy="whsecret" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></dd>
+    <dt>{{ _("Signature header") }}</dt><dd class="mono">X-Community-Signature: sha256=HMAC(secret, body)</dd>
   </dl>
 </section>
 
 <section class="panel">
   <div class="panel-h">
-    <h2>API keys</h2><span class="sub">Bearer tokens bound to <b>{{ m.address }}</b></span>
+    <h2>{{ _("API keys") }}</h2><span class="sub">{{ _("Bearer tokens bound to") }} <b>{{ m.address }}</b></span>
     <span class="spacer"></span>
-    <div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-key">Issue API key&hellip;</button>{% endcall %}</div>
+    <div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-key">{{ _("Issue API key…") }}</button>{% endcall %}</div>
   </div>
-  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-key">Issue API key&hellip;</button></div>
+  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-key">{{ _("Issue API key…") }}</button></div>
   <div class="grid-wrap">
     <table class="grid sortable">
-      <thead><tr><th>Key</th><th>Label</th><th>Status</th><th>Created</th><th>Last used</th><th class="nosort"></th></tr></thead>
+      <thead><tr><th>{{ _("Key") }}</th><th>{{ _("Label") }}</th><th>{{ _("Status") }}</th><th>{{ _("Created") }}</th><th>{{ _("Last used") }}</th><th class="nosort"></th></tr></thead>
       <tbody>
       {% for k in m.api_keys %}
       <tr class="{{ 'dim' if k.revoked_at }}">
         <td class="mono">{{ k.prefix }}&hellip;</td><td class="w100">{{ k.label or '—' }}</td>
-        <td>{% if k.revoked_at %}<span class="st">Revoked {{ k.revoked_at|dt }}</span>{% else %}<span class="st ok">Active</span>{% endif %}</td>
+        <td>{% if k.revoked_at %}<span class="st">{{ _("Revoked") }} {{ k.revoked_at|dt }}</span>{% else %}<span class="st ok">{{ _("Active") }}</span>{% endif %}</td>
         <td>{{ k.created_at|dt }}</td><td>{{ k.last_used_at|dt if k.last_used_at else '—' }}</td>
-        <td>{% if not k.revoked_at %}<form method="post" action="/keys/{{ k.id }}/revoke" class="inline" data-confirm="Revoke key {{ k.prefix }}…?">{{ ui.csrf_field() }}<button class="btn sm danger">Revoke</button></form>{% endif %}</td>
+        <td>{% if not k.revoked_at %}<form method="post" action="/keys/{{ k.id }}/revoke" class="inline" data-confirm="{{ _('Revoke key {prefix}…?', prefix=k.prefix) }}">{{ ui.csrf_field() }}<button class="btn sm danger">{{ _("Revoke") }}</button></form>{% endif %}</td>
       </tr>
-      {% else %}<tr class="empty"><td colspan="6">No keys issued.</td></tr>{% endfor %}
+      {% else %}<tr class="empty"><td colspan="6">{{ _("No keys issued.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
 </section>
 
-{% call ui.dialog("dlg-key", "Issue API key", "/machines/" ~ m.id ~ "/keys", ok="Issue") %}
-  <div class="lead">Issue a key for {{ m.name }}</div>
+{% call ui.dialog("dlg-key", _("Issue API key"), "/machines/" ~ m.id ~ "/keys", ok=_("Issue")) %}
+  <div class="lead">{{ _("Issue a key for {name}", name=m.name) }}</div>
   <div class="fgrid">
-    <label for="k-label">Label</label><input id="k-label" name="label" placeholder="e.g. ci-runner">
-    <span class="note">The key is shown once after it is issued. Only a hash is stored.</span>
+    <label for="k-label">{{ _("Label") }}</label><input id="k-label" name="label" placeholder="ci-runner">
+    <span class="note">{{ _("The key is shown once after it is issued. Only a hash is stored.") }}</span>
   </div>
 {% endcall %}
 
-{% call ui.dialog("dlg-webhook", "Configure webhook", "/machines/" ~ m.id ~ "/webhook", ok="Save", wide=True) %}
+{% call ui.dialog("dlg-webhook", _("Configure webhook"), "/machines/" ~ m.id ~ "/webhook", ok=_("Save"), wide=True) %}
   <div class="fgrid">
     <label for="w-url">URL</label><input id="w-url" name="webhook_url" value="{{ m.webhook_url or '' }}" placeholder="https://agent.example.com/hook" class="mono">
-    <span class="note">New messages for this machine are POSTed as JSON. Leave empty to disable. Failed deliveries are retried with backoff.</span>
+    <span class="note">{{ _("New messages for this machine are POSTed as JSON. Leave empty to disable. Failed deliveries are retried with backoff.") }}</span>
   </div>
 {% endcall %}
 
 {% if new_key %}
 <dialog id="dlg-newkey" class="wide" data-autoopen>
-  <div class="dlg-h"><h3>API key created</h3><button type="button" class="x" data-close aria-label="Close">&#x2715;</button></div>
+  <div class="dlg-h"><h3>{{ _("API key created") }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
   <div class="dlg-b">
-    <div class="notice warn">Copy this key now. It will not be shown again.</div>
-    <div class="keybox"><code id="newkey" data-api-key="{{ new_key }}">{{ new_key }}</code><button type="button" class="btn" data-copy="newkey">Copy</button></div>
+    <div class="notice warn">{{ _("Copy this key now. It will not be shown again.") }}</div>
+    <div class="keybox"><code id="newkey" data-api-key="{{ new_key }}">{{ new_key }}</code><button type="button" class="btn" data-copy="newkey" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></div>
     <pre class="snippet">curl -X POST {{ request.base_url }}api/v1/messages \
   -H "Authorization: Bearer {{ new_key }}" \
   -H "Content-Type: application/json" \
   -d '{"to": "{{ m.user.address('*') }}", "subject": "hello", "body": "Hello from {{ m.name }}"}'</pre>
+    <div class="hint">{{ _("AI agents: give the agent AC_BASE_URL and this key as AC_API_KEY, and point it to") }} <a href="/skill.md" target="_blank">{{ request.base_url }}skill.md</a></div>
   </div>
-  <div class="dlg-f"><button type="button" class="btn primary" data-close>Close</button></div>
+  <div class="dlg-f"><button type="button" class="btn primary" data-close>{{ _("Close") }}</button></div>
 </dialog>
 {% endif %}
 {% endblock %}

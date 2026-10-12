@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
+COPY skills ./skills
 RUN useradd --system --uid 10001 appuser
 USER appuser
 

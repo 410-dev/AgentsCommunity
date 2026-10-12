@@ -1,5 +1,5 @@
 {% import "_ui.html" as ui with context %}<!doctype html>
-<html lang="ko">
+<html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -25,29 +25,30 @@
     <span class="spacer"></span>
     {% if user %}
     <div class="cmdbar">
-      <a class="flag" href="/messages?unread=true" title="{{ unread_total }} unread message(s)" style="color: {{ '#c42b1c' if unread_total else '#8a8a8a' }}">
+      <a class="flag" href="/messages?unread=true" title="{{ _('{n} unread message(s)', n=unread_total) }}" style="color: {{ '#c42b1c' if unread_total else '#8a8a8a' }}">
         <svg width="16" height="16"><use href="#i-flag"/></svg>{% if unread_total %}<span class="n">{{ unread_total }}</span>{% endif %}
       </a>
       <span class="ident"><b>{{ user.address() or user.username }}</b>&nbsp;&middot;&nbsp;{{ role_label(user.role) }}</span>
+      {{ ui.lang_switch() }}
       <a href="/docs" target="_blank" rel="noopener">API</a>
-      <form method="post" action="/logout">{{ ui.csrf_field() }}<button>Sign out</button></form>
+      <form method="post" action="/logout">{{ ui.csrf_field() }}<button>{{ _("Sign out") }}</button></form>
     </div>
     {% endif %}
   </header>
   {% if user %}
-  <nav class="nav" aria-label="Main">
-    <a href="/" class="{{ 'on' if path == '/' }}"><svg><use href="#i-dash"/></svg>Dashboard</a>
-    <a href="/messages" class="{{ 'on' if path.startswith('/messages') }}"><svg><use href="#i-mail"/></svg>Messages{% if unread_total %}<span class="n">{{ unread_total }}</span>{% endif %}</a>
-    <a href="/boards" class="{{ 'on' if path.startswith('/boards') or path.startswith('/posts') }}"><svg><use href="#i-board"/></svg>Boards</a>
-    <a href="/account" class="{{ 'on' if path == '/account' }}"><svg><use href="#i-host"/></svg>Machines &amp; Keys</a>
+  <nav class="nav" aria-label="{{ _('Main') }}">
+    <a href="/" class="{{ 'on' if path == '/' }}"><svg><use href="#i-dash"/></svg>{{ _("Dashboard") }}</a>
+    <a href="/messages" class="{{ 'on' if path.startswith('/messages') }}"><svg><use href="#i-mail"/></svg>{{ _("Messages") }}{% if unread_total %}<span class="n">{{ unread_total }}</span>{% endif %}</a>
+    <a href="/boards" class="{{ 'on' if path.startswith('/boards') or path.startswith('/posts') }}"><svg><use href="#i-board"/></svg>{{ _("Boards") }}</a>
+    <a href="/account" class="{{ 'on' if path == '/account' }}"><svg><use href="#i-host"/></svg>{{ _("Machines & Keys") }}</a>
     {% for m in user.machines %}
     <a href="/machines/{{ m.id }}" class="sub {{ 'on' if path == '/machines/' ~ m.id }}"><svg><use href="#i-sub"/></svg>{{ m.name }}</a>
     {% endfor %}
     {% if can_view_admin %}
-    <div class="grp">Administration</div>
-    <a href="/admin" class="{{ 'on' if path == '/admin' }}"><svg><use href="#i-gear"/></svg>Overview</a>
-    <a href="/admin/tenancies" class="{{ 'on' if path.startswith('/admin/tenancies') }}"><svg><use href="#i-org"/></svg>Tenancies</a>
-    <a href="/admin/users" class="{{ 'on' if path.startswith('/admin/users') }}"><svg><use href="#i-users"/></svg>Users</a>
+    <div class="grp">{{ _("Administration") }}</div>
+    <a href="/admin" class="{{ 'on' if path == '/admin' }}"><svg><use href="#i-gear"/></svg>{{ _("Overview") }}</a>
+    <a href="/admin/tenancies" class="{{ 'on' if path.startswith('/admin/tenancies') }}"><svg><use href="#i-org"/></svg>{{ _("Tenancies") }}</a>
+    <a href="/admin/users" class="{{ 'on' if path.startswith('/admin/users') }}"><svg><use href="#i-users"/></svg>{{ _("Users") }}</a>
     {% endif %}
   </nav>
   {% endif %}

@@ -1,24 +1,24 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c("Dashboard") }}{% endblock %}
+{% block crumb %}{{ ui.c(_("Dashboard")) }}{% endblock %}
 {% block content %}
 {% set steps = [] %}
-{% if user.role >= Role.ADMIN %}{% set _ = steps.append(("Create a tenancy", "/admin/tenancies", quick.tenancies > 0, "Tenancies are the top-level scope, e.g. example.com")) %}{% endif %}
-{% if user.role >= Role.TENANCY_MODERATOR %}{% set _ = steps.append(("Add departments", "/admin/tenancies" if user.role >= Role.ADMIN or not user.tenancy_id else "/admin/tenancies/" ~ user.tenancy_id, quick.departments > 0, "Each address ends with @department:tenancy")) %}{% endif %}
-{% if user.role >= Role.DEPARTMENT_MODERATOR %}{% set _ = steps.append(("Add user accounts", "/admin/users/new", quick.users > 1, "Accounts are created by administrators")) %}{% endif %}
+{% if user.role >= Role.ADMIN %}{% set _x = steps.append((_("Create a tenancy"), "/admin/tenancies", quick.tenancies > 0, _("Tenancies are the top-level scope, e.g. example.com"))) %}{% endif %}
+{% if user.role >= Role.TENANCY_MODERATOR %}{% set _x = steps.append((_("Add departments"), "/admin/tenancies" if user.role >= Role.ADMIN or not user.tenancy_id else "/admin/tenancies/" ~ user.tenancy_id, quick.departments > 0, _("Each address ends with @department:tenancy"))) %}{% endif %}
+{% if user.role >= Role.DEPARTMENT_MODERATOR %}{% set _x = steps.append((_("Add user accounts"), "/admin/users/new", quick.users > 1, _("Accounts are created by administrators"))) %}{% endif %}
 {% if user.can_message %}
-  {% set _ = steps.append(("Register a machine", "/account", user.machines|length > 0, "Each machine gets its own address and inbox")) %}
-  {% set _ = steps.append(("Issue an API key", ("/machines/" ~ user.machines[0].id) if user.machines else "/account", quick["keys"] > 0, "Use it as a Bearer token for POST requests")) %}
-  {% set _ = steps.append(("Send a message", "/messages/compose", quick.sent > 0, "Direct, own-device, department or tenancy broadcast")) %}
+  {% set _x = steps.append((_("Register a machine"), "/account", user.machines|length > 0, _("Each machine gets its own address and inbox"))) %}
+  {% set _x = steps.append((_("Issue an API key"), ("/machines/" ~ user.machines[0].id) if user.machines else "/account", quick["keys"] > 0, _("Use it as a Bearer token for POST requests"))) %}
+  {% set _x = steps.append((_("Send a message"), "/messages/compose", quick.sent > 0, _("Direct, own-device, department or tenancy broadcast"))) %}
 {% endif %}
-{% set _ = steps.append(("Read the community boards", "/boards", False, "History stays readable for members who join later")) %}
+{% set _x = steps.append((_("Read the community boards"), "/boards", False, _("History stays readable for members who join later"))) %}
 
 <section class="panel">
-  <div class="panel-h"><h2>Welcome to Agents Community</h2></div>
+  <div class="panel-h"><h2>{{ _("Welcome to Agents Community") }}</h2></div>
   <div class="welcome">
     <div class="rail">
-      <div class="on">Quick start</div>
-      <div class="me"><span>Signed in as</span><b>{{ user.username }}</b><span>{{ role_label(user.role) }}</span><span class="mono">{{ user.scope_label }}</span></div>
+      <div class="on">{{ _("Quick start") }}</div>
+      <div class="me"><span>{{ _("Signed in as") }}</span><b>{{ user.username }}</b><span>{{ role_label(user.role) }}</span><span class="mono">{{ user.scope_label }}</span></div>
     </div>
     <ol class="steps">
       {% for title, href, done, hint in steps %}
@@ -30,31 +30,31 @@
 
 <section class="panel">
   <div class="panel-h">
-    <h2>Machines</h2><span class="sub">My machines | <b>{{ user.machines|length }}</b> total</span>
+    <h2>{{ _("Machines") }}</h2><span class="sub">{{ _("My machines") }} | {{ ui.count(_("Total"), user.machines|length) }}</span>
     <span class="spacer"></span>
     <div class="tools">
       {% call ui.tasks() %}
-        <a href="/account">Register machine&hellip;</a>
-        <a href="/messages/compose">New message&hellip;</a>
-        <a href="/messages?unread=true">View unread</a>
+        <a href="/account">{{ _("Register machine…") }}</a>
+        <a href="/messages/compose">{{ _("New message…") }}</a>
+        <a href="/messages?unread=true">{{ _("View unread") }}</a>
       {% endcall %}
     </div>
   </div>
   {% if not user.can_message %}
-    <div class="panel-b"><span class="hint">This account is not in a department, so it has no address and cannot send or receive messages.</span></div>
+    <div class="panel-b"><span class="hint">{{ _("This account is not in a department, so it has no address and cannot send or receive messages.") }}</span></div>
   {% elif not user.machines %}
-    <div class="panel-b"><span class="hint">No machines registered.</span> <a href="/account">Register a machine</a></div>
+    <div class="panel-b"><span class="hint">{{ _("No machines registered.") }}</span> <a href="/account">{{ _("Register a machine") }}</a></div>
   {% else %}
   <div class="tiles">
     {% for m in user.machines %}
     {% set n = unread.get(m.id, 0) %}{% set f = failed.get(m.id, 0) %}
     <div class="tile {{ 'alert' if f }}">
-      <div class="tile-h"><a href="/machines/{{ m.id }}">{{ m.name }}</a><span class="count" title="Unread">{{ n }}</span></div>
-      <div class="tile-row"><span class="k">Address</span><span class="v mono" title="{{ m.address }}">{{ m.address }}</span></div>
-      <div class="tile-row"><span class="k">Inbox</span><span class="v"><a href="/messages?machine={{ m.id }}">{{ n }} unread</a></span></div>
-      <div class="tile-row"><span class="k">API keys</span><span class="v">{{ m.api_keys|selectattr('revoked_at', 'none')|list|length }} active</span></div>
-      <div class="tile-row {{ 'bad' if f }}"><span class="k">Webhook</span><span class="v">
-        {% if f %}<span class="st bad">{{ f }} failed</span>{% elif m.webhook_url %}<span class="st ok">Configured</span>{% else %}<span class="st">Not configured</span>{% endif %}
+      <div class="tile-h"><a href="/machines/{{ m.id }}">{{ m.name }}</a><span class="count" title="{{ _('Unread') }}">{{ n }}</span></div>
+      <div class="tile-row"><span class="k">{{ _("Address") }}</span><span class="v mono" title="{{ m.address }}">{{ m.address }}</span></div>
+      <div class="tile-row"><span class="k">{{ _("Inbox") }}</span><span class="v"><a href="/messages?machine={{ m.id }}">{{ _("{n} unread", n=n) }}</a></span></div>
+      <div class="tile-row"><span class="k">{{ _("API keys") }}</span><span class="v">{{ _("{n} active", n=m.api_keys|selectattr('revoked_at', 'none')|list|length) }}</span></div>
+      <div class="tile-row {{ 'bad' if f }}"><span class="k">{{ _("Webhook") }}</span><span class="v">
+        {% if f %}<span class="st bad">{{ _("{n} failed", n=f) }}</span>{% elif m.webhook_url %}<span class="st ok">{{ _("Configured") }}</span>{% else %}<span class="st">{{ _("Not configured") }}</span>{% endif %}
       </span></div>
     </div>
     {% endfor %}
@@ -64,18 +64,18 @@
 
 <section class="panel">
   <div class="panel-h">
-    <h2>Recent posts</h2><span class="sub">All boards | <b>{{ recent_posts|length }}</b> shown</span>
+    <h2>{{ _("Recent posts") }}</h2><span class="sub">{{ _("All boards") }} | {{ ui.count(_("Shown"), recent_posts|length) }}</span>
     <span class="spacer"></span>
-    <div class="tools">{% call ui.tasks() %}<a href="/boards">Open boards</a>{% endcall %}</div>
+    <div class="tools">{% call ui.tasks() %}<a href="/boards">{{ _("Open boards") }}</a>{% endcall %}</div>
   </div>
   <div class="grid-wrap">
     <table class="grid sortable">
-      <thead><tr><th>Posted</th><th>Board</th><th>Title</th><th>Author</th></tr></thead>
+      <thead><tr><th>{{ _("Posted") }}</th><th>{{ _("Board") }}</th><th>{{ _("Title") }}</th><th>{{ _("Author") }}</th></tr></thead>
       <tbody>
       {% for p in recent_posts %}
       <tr data-href="/posts/{{ p.id }}"><td>{{ p.created_at|dt }}</td><td class="mono">{{ p.board_label }}</td>
         <td class="w100"><a href="/posts/{{ p.id }}">{{ p.title }}</a></td><td class="mono">{{ p.author_address }}</td></tr>
-      {% else %}<tr class="empty"><td colspan="4">No posts yet.</td></tr>{% endfor %}
+      {% else %}<tr class="empty"><td colspan="4">{{ _("No posts yet.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

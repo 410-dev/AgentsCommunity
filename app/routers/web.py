@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, object_session
 
 from .. import boards as boardsvc
 from ..db import get_db
+from ..i18n import COOKIE as LANG_COOKIE, LANGUAGES, detect_language, translator
 from ..deps import csrf_protect, csrf_token, current_user, optional_user, super_admin_exists
 from ..messaging import MessagingError, send_message
 from ..models import ApiKey, Comment, Department, Machine, Message, MessageDelivery, Post, Tenancy, User, utcnow
@@ -53,11 +54,18 @@ def render(request: Request, name: str, user: User | None = None, status_code: i
             .join(Machine)
             .where(Machine.user_id == user.id, MessageDelivery.read_at.is_(None))
         )
+    lang = detect_language(request)
+    _ = translator(lang)
     ctx.update(
         request=request,
         user=user,
         csrf=csrf_token(request),
-        flashes=flashes,
+        flashes=[[f[0], _(f[1], **{k: _(v) if isinstance(v, str) else v for k, v in (f[2] if len(f) > 2 else {}).items()})]
+                 for f in flashes],
+        _=_,
+        lang=lang,
+        languages=LANGUAGES,
+        role_label=lambda value: _(role_label(value)),
         can_view_admin=bool(user and can_view_admin(user)),
         unread_total=unread_total,
         path=request.url.path,
@@ -65,8 +73,9 @@ def render(request: Request, name: str, user: User | None = None, status_code: i
     return templates.TemplateResponse(request, name, ctx, status_code=status_code)
 
 
-def flash(request: Request, message: str, category: str = "info") -> None:
-    request.session.setdefault("flash", []).append([category, message])
+def flash(request: Request, message: str, category: str = "info", **params) -> None:
+    """Queue a notice. `message` is an English source string with optional {placeholders}."""
+    request.session.setdefault("flash", []).append([category, message, params])
 
 
 def redirect(url: str) -> RedirectResponse:
@@ -103,11 +112,11 @@ def setup(
     if not valid_name(username):
         error = "Username must be lowercase letters, digits, '.', '_' or '-'."
     elif len(password) < MIN_PASSWORD:
-        error = f"Password must be at least {MIN_PASSWORD} characters."
+        error = "Password must be at least {n} characters."
     elif password != password2:
         error = "Passwords do not match."
     if error:
-        flash(request, error, "error")
+        flash(request, error, "error", n=MIN_PASSWORD)
         return render(request, "setup.html", status_code=400)
     user = User(
         username=username,
@@ -164,6 +173,17 @@ def login(
 def logout(request: Request):
     request.session.clear()
     return redirect("/login")
+
+
+@router.get("/lang/{code}")
+def set_language(code: str, next: str = "/"):
+    if code not in LANGUAGES:
+        raise HTTPException(404, "Unknown language")
+    if not next.startswith("/") or next.startswith("//"):
+        next = "/"
+    resp = redirect(next)
+    resp.set_cookie(LANG_COOKIE, code, max_age=60 * 60 * 24 * 365, samesite="lax")
+    return resp
 
 
 # ---- dashboard --------------------------------------------------------------
@@ -295,10 +315,10 @@ def compose(
     try:
         msg = send_message(db, machine, to, body, subject)
     except MessagingError as exc:
-        flash(request, exc.detail, "error")
+        flash(request, exc.template, "error", **exc.params)
         return render(request, "compose.html", user, status_code=exc.status, to=to, subject=subject, body=body,
                       machine_id=machine_id)
-    flash(request, f"Message sent to {len(msg.deliveries)} machine(s).", "success")
+    flash(request, "Message sent to {n} machine(s).", "success", n=len(msg.deliveries))
     return redirect("/messages?box=sent")
 
 
@@ -450,7 +470,7 @@ def change_password(
     if not verify_password(current, user.password_hash):
         flash(request, "Current password is incorrect.", "error")
     elif len(new) < MIN_PASSWORD:
-        flash(request, f"Password must be at least {MIN_PASSWORD} characters.", "error")
+        flash(request, "Password must be at least {n} characters.", "error", n=MIN_PASSWORD)
     elif new != new2:
         flash(request, "Passwords do not match.", "error")
     else:
@@ -479,7 +499,7 @@ def machine_create(
         m = Machine(user_id=user.id, name=name, description=description.strip(), webhook_secret=generate_webhook_secret())
         db.add(m)
         db.commit()
-        flash(request, f"Machine registered: {m.address}", "success")
+        flash(request, "Machine registered: {address}", "success", address=m.address)
         return redirect(f"/machines/{m.id}")
     return redirect("/account")
 
@@ -514,7 +534,7 @@ def key_revoke(request: Request, key_id: int, user: User = Depends(current_user)
     if k.revoked_at is None:
         k.revoked_at = utcnow()
         db.commit()
-    flash(request, f"Key {k.prefix}… revoked.", "success")
+    flash(request, "Key {prefix}… revoked.", "success", prefix=k.prefix)
     return redirect(f"/machines/{k.machine_id}")
 
 
@@ -581,17 +601,17 @@ def _visible_tenancies(db: Session, user: User) -> list[Tenancy]:
     return [user.tenancy] if user.tenancy else []
 
 
-def _placements(db: Session, actor: User) -> list[tuple[str, str]]:
+def _placements(db: Session, actor: User) -> list[tuple[str, str, str]]:
     """Options for the placement select: ('', global) / ('t:<id>', tenancy) / ('d:<id>', department)."""
     opts: list[tuple[str, str]] = []
     if actor.role >= Role.ADMIN:
-        opts.append(("", "(global — Admins only)"))
+        opts.append(("", "", "(global — Admins only)"))
     for t in _visible_tenancies(db, actor):
         if actor.role >= Role.TENANCY_MODERATOR:
-            opts.append((f"t:{t.id}", f"*:{t.name}  (tenancy only)"))
+            opts.append((f"t:{t.id}", f"*:{t.name}", "(tenancy only)"))
         for d in t.departments:
             if in_scope(actor, t.id, d.id):
-                opts.append((f"d:{d.id}", f"{d.name}:{t.name}"))
+                opts.append((f"d:{d.id}", f"{d.name}:{t.name}", ""))
     return opts
 
 
@@ -661,7 +681,7 @@ def admin_tenancy_create(
         db.rollback()
         flash(request, "A tenancy with that name already exists.", "error")
         return redirect("/admin/tenancies")
-    flash(request, f"Tenancy {name} created. Add departments next.", "success")
+    flash(request, "Tenancy {name} created. Add departments next.", "success", name=name)
     return redirect(f"/admin/tenancies/{t.id}")
 
 
@@ -741,7 +761,7 @@ def admin_department_create(
     db.add(Department(tenancy_id=t.id, name=name, description=description.strip()))
     try:
         db.commit()
-        flash(request, f"Department {name}:{t.name} created.", "success")
+        flash(request, "Department {name} created.", "success", name=f"{name}:{t.name}")
     except IntegrityError:
         db.rollback()
         flash(request, "That department already exists.", "error")
@@ -795,7 +815,7 @@ def admin_user_create(
     if error is None and not valid_name(username):
         error = "Username must be lowercase letters, digits, '.', '_' or '-'."
     if error is None and len(password) < MIN_PASSWORD:
-        error = f"Password must be at least {MIN_PASSWORD} characters."
+        error = "Password must be at least {n} characters."
     if error is None:
         new = User(
             username=username, display_name=display_name.strip(), password_hash=hash_password(password), role=role,
@@ -804,12 +824,12 @@ def admin_user_create(
         db.add(new)
         try:
             db.commit()
-            flash(request, f"User {new.address() or username} created.", "success")
+            flash(request, "User {name} created.", "success", name=new.address() or username)
             return redirect(f"/admin/users/{new.id}")
         except IntegrityError:
             db.rollback()
             error = "That username is already taken in this tenancy."
-    flash(request, error, "error")
+    flash(request, error, "error", n=MIN_PASSWORD)
     return render(request, "admin/user_form.html", user, status_code=400, target=None, roles=assignable_roles(user),
                   placements=_placements(db, user),
                   form={"username": username, "display_name": display_name, "role": role, "placement": placement})
@@ -878,7 +898,7 @@ def admin_user_password(
 ):
     target = _managed_target(db, user, user_id)
     if len(password) < MIN_PASSWORD:
-        flash(request, f"Password must be at least {MIN_PASSWORD} characters.", "error")
+        flash(request, "Password must be at least {n} characters.", "error", n=MIN_PASSWORD)
     else:
         target.password_hash = hash_password(password)
         db.commit()

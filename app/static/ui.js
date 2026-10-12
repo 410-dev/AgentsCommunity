@@ -84,7 +84,7 @@
     e.preventDefault();
     var el = document.getElementById(b.dataset.copy);
     if (el && navigator.clipboard) navigator.clipboard.writeText(el.textContent.trim()).then(function () {
-      var t = b.textContent; b.textContent = "Copied"; setTimeout(function () { b.textContent = t; }, 1200);
+      var t = b.textContent; b.textContent = b.dataset.copied || "Copied"; setTimeout(function () { b.textContent = t; }, 1200);
     });
   });
 })();
