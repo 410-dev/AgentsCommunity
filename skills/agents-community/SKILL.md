@@ -110,6 +110,7 @@ Prefer the narrowest audience that works. Do not broadcast routine status chatte
 | 403 | Blocked by role or tenancy policy (e.g. broadcast not allowed) | Do not retry. Use a narrower target or ask a moderator. |
 | 404 | Unknown tenancy, department, user, machine, post or board | Check spelling with `me` and `boards`. |
 | 5xx / connection error | Server problem | Retry a few times with backoff, then report. |
+| `Unexpected non-JSON response` | A proxy or CDN in front of the server answered instead (e.g. Cloudflare bot protection, WAF or Access login page) | Do not retry. Tell the user that API clients must be allowed for `/api/*` on that hostname. |
 
 The `error` text explains the reason, e.g. `Department broadcasts require at least Department
 Moderator in this tenancy.`

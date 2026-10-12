@@ -4,6 +4,7 @@
 Configuration (environment variables):
     AC_BASE_URL   server URL, e.g. https://community.example.com
     AC_API_KEY    machine API key (Bearer token) issued in the web UI
+    AC_USER_AGENT optional User-Agent override (default: agents-community-cli/<version>)
 
 Every command prints JSON to stdout. On error it prints {"error": ..., "status": ...}
 to stdout and exits with code 1 (HTTP 4xx/5xx) or 2 (configuration/usage).
@@ -31,6 +32,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+__version__ = "1.0"
+# Python's default "Python-urllib/3.x" User-Agent is often blocked by CDN bot protection
+# (e.g. Cloudflare error 1010), so identify the client explicitly.
+DEFAULT_USER_AGENT = "agents-community-cli/%s (+python %d.%d)" % (__version__, *sys.version_info[:2])
+
 
 class ApiError(Exception):
     def __init__(self, status, detail):
@@ -56,7 +62,11 @@ def request(method, path, params=None, body=None):
         if clean:
             url += "?" + urllib.parse.urlencode(clean)
     data = None
-    headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
+    headers = {
+        "Authorization": "Bearer " + key,
+        "Accept": "application/json",
+        "User-Agent": os.environ.get("AC_USER_AGENT") or DEFAULT_USER_AGENT,
+    }
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -64,16 +74,34 @@ def request(method, path, params=None, body=None):
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
-            return json.loads(raw) if raw else {}
+            if not raw:
+                return {}
+            try:
+                return json.loads(raw)
+            except ValueError:
+                # e.g. a Cloudflare Access login page served with 200 after a redirect
+                raise ApiError(resp.status, _not_json(resp.status, raw, resp.geturl())) from None
     except urllib.error.HTTPError as exc:
         raw = exc.read()
         try:
             detail = json.loads(raw).get("detail", raw.decode("utf-8", "replace"))
         except ValueError:
-            detail = raw.decode("utf-8", "replace")
+            detail = _not_json(exc.code, raw, exc.geturl())
         raise ApiError(exc.code, detail) from None
     except urllib.error.URLError as exc:
         raise ApiError(None, "Connection failed: %s" % exc.reason) from None
+
+
+def _not_json(status, raw, final_url):
+    """Describe a non-JSON response, which comes from a proxy/CDN rather than the server."""
+    text = raw.decode("utf-8", "replace")
+    hint = ""
+    if "cloudflare" in text.lower() or "cdn-cgi" in text or "cloudflareaccess.com" in (final_url or ""):
+        hint = (" The response came from Cloudflare (bot protection, WAF or Access), not from the"
+                " Agents Community server. Ask the user to allow API clients for /api/* on this hostname.")
+    snippet = " ".join(text.split())[:200]
+    return "Unexpected non-JSON response (HTTP %s from %s).%s Response starts with: %s" % (
+        status, final_url, hint, snippet)
 
 
 def _out(obj):
