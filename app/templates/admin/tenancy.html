@@ -12,7 +12,7 @@
       <button type="button" data-open="dlg-policy">{{ _("Edit properties and policy…") }}</button>
       <button type="button" data-open="dlg-dept">{{ _("Add department…") }}</button>
       <a href="/admin/users/new?placement=t:{{ t.id }}">{{ _("Add user…") }}</a>
-      <hr><a href="/boards/*:{{ t.name }}">{{ _("Open tenancy board") }}</a>
+      {% if t.board_enabled %}<hr><a href="/boards/*:{{ t.name }}">{{ _("Open tenancy board") }}</a>{% endif %}
     {% endcall %}</div>
     {% endif %}
   </div>
@@ -22,7 +22,8 @@
     <dt>{{ _("Description") }}</dt><dd>{{ t.description or '—' }}</dd>
     <dt>{{ _("Departments") }}</dt><dd>{{ t.departments|length }}</dd>
     <dt>{{ _("Users") }}</dt><dd>{{ total_users }}</dd>
-    <dt>{{ _("Tenancy board") }}</dt><dd><a href="/boards/*:{{ t.name }}" class="mono">*:{{ t.name }}</a></dd>
+    <dt>{{ _("Tenancy board") }}</dt><dd>{% if t.board_enabled %}<a href="/boards/*:{{ t.name }}" class="mono">*:{{ t.name }}</a>{% else %}<span class="st">{{ _("Off — only created boards") }}</span>{% endif %}</dd>
+    <dt>{{ _("Tenancy-wide created boards") }}</dt><dd>{% for p in t.projects %}<a href="/boards/*/{{ p.name }}:{{ t.name }}" class="mono">*/{{ p.name }}</a>{{ ', ' if not loop.last }}{% else %}—{% endfor %}</dd>
   </dl>
 </section>
 
@@ -52,19 +53,23 @@
   <div class="panel-h">
     <h2>{{ _("Departments") }}</h2><span class="sub">{{ ui.count(_("Total"), t.departments|length) }}</span>
     <span class="spacer"></span>
-    {% if can_manage %}<div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-dept">{{ _("Add department…") }}</button>{% endcall %}</div>{% endif %}
+    {% if can_manage %}<div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-dept">{{ _("Add department…") }}</button>
+      {% if t.departments %}<button type="button" data-open="dlg-batch-depts">{{ _("Batch manage…") }}</button>{% endif %}{% endcall %}</div>{% endif %}
   </div>
+  {% if can_manage and t.departments %}<div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-dept">{{ _("Add department…") }}</button><button type="button" class="btn sm" data-open="dlg-batch-depts">{{ _("Batch manage…") }}</button></div>{% endif %}
   <div class="grid-wrap">
     <table class="grid sortable">
-      <thead><tr><th>{{ _("Name") }}</th><th class="num">{{ _("Users") }}</th><th class="num">{{ _("Project boards") }}</th><th>{{ _("Description") }}</th><th class="nosort"></th></tr></thead>
+      <thead><tr><th>{{ _("Name") }}</th><th class="num">{{ _("Users") }}</th><th>{{ _("Department board") }}</th><th class="num">{{ _("Project boards") }}</th><th>{{ _("Description") }}</th><th class="nosort"></th></tr></thead>
       <tbody>
       {% for d in t.departments %}
-      <tr><td class="mono"><a href="/boards/{{ d.name }}:{{ t.name }}" title="{{ _('Open board') }}">{{ d.name }}</a></td>
-        <td class="num">{{ counts.get(d.id, 0) }}</td><td class="num">{{ d.projects|length }}</td><td class="w100 hint">{{ d.description }}</td>
+      <tr><td class="mono">{% if d.board_enabled %}<a href="/boards/{{ d.name }}:{{ t.name }}" title="{{ _('Open board') }}">{{ d.name }}</a>{% else %}{{ d.name }}{% endif %}</td>
+        <td class="num">{{ counts.get(d.id, 0) }}</td>
+        <td>{% if d.board_enabled %}<span class="st ok">{{ _("On") }}</span>{% else %}<span class="st">{{ _("Off") }}</span>{% endif %}</td>
+        <td class="num">{{ d.projects|length }}</td><td class="w100 hint">{{ d.description }}</td>
         <td><a class="btn sm" href="/admin/users/new?placement=d:{{ d.id }}">{{ _("Add user") }}</a>
           {% if can_manage %}<button type="button" class="btn sm" data-open="dlg-dept-{{ d.id }}">{{ _("Edit…") }}</button>
           <form method="post" action="/admin/departments/{{ d.id }}/delete" class="inline" data-confirm="{{ _('Delete department {name} and its board?', name=d.name) }}">{{ ui.csrf_field() }}<button class="btn sm danger">{{ _("Delete") }}</button></form>{% endif %}</td></tr>
-      {% else %}<tr class="empty"><td colspan="5">{{ _("No departments.") }}</td></tr>{% endfor %}
+      {% else %}<tr class="empty"><td colspan="6">{{ _("No departments.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -75,11 +80,14 @@
   <div class="panel-h">
     <h2>{{ _("Users") }}</h2><span class="sub">{{ t.name }} | {{ ui.count(_("Total"), total_users, "users") }}</span>
     <span class="spacer"></span>
-    <div class="tools">{% call ui.tasks() %}<a href="/admin/users/new?placement=t:{{ t.id }}">{{ _("Add user…") }}</a>{% endcall %}</div>
+    <div class="tools">{% call ui.tasks() %}<a href="/admin/users/new?placement=t:{{ t.id }}">{{ _("Add user…") }}</a>
+      <a href="/admin/users/new?placement=t:{{ t.id }}&amp;kind=agent">{{ _("Add agent account…") }}</a>{% endcall %}</div>
   </div>
-  <div class="panel-tb"><span style="flex:1"></span>{{ ui.filter("users") }}</div>
+  <div class="panel-tb">{% include "admin/_users_batch_button.html" %}<span style="flex:1"></span>{{ ui.filter("users") }}</div>
   {% include "admin/_users_table.html" %}
 </section>
+{% set batch_next = "/admin/tenancies/" ~ t.id %}
+{% include "admin/_users_batch.html" %}
 
 {% if can_manage %}
 {% call ui.dialog("dlg-policy", _("{name} Properties", name=t.name), "/admin/tenancies/" ~ t.id ~ "/policy", ok=_("Apply"), wide=True) %}
@@ -96,6 +104,8 @@
     <label for="min_role_tenancy_broadcast">{{ _("Whole tenancy") }}</label>{{ policy_select('min_role_tenancy_broadcast', t.min_role_tenancy_broadcast) }}
     <span></span><label class="chk"><input type="checkbox" name="allow_cross_tenancy_dm" value="true" {% if t.allow_cross_tenancy_dm %}checked{% endif %}>{{ _("Allow direct messages to and from other tenancies") }}</label>
     <span class="note">{{ _("Cross-tenancy messages also require the other tenancy to allow them.") }}</span>
+    <span></span><label class="chk"><input type="hidden" name="board_setting" value="true"><input type="checkbox" name="board_enabled" value="true" {% if t.board_enabled %}checked{% endif %}>{{ _("Enable the tenancy board") }} <code>*:{{ t.name }}</code></label>
+    <span class="note">{{ _("When off, only created boards can be used. Its posts are kept and return when it is turned on again.") }}</span>
   </div>
 {% endcall %}
 {% for d in t.departments %}
@@ -104,9 +114,15 @@
     <label for="de-name-{{ d.id }}">{{ _("Name") }}</label><input id="de-name-{{ d.id }}" name="name" required value="{{ d.name }}" class="mono">
     <span class="note">{{ _("Renaming changes the addresses of all members and the board keys:") }} <code>id:machine@&lt;name&gt;:{{ t.name }}</code>. {{ _("API keys and MCP keys keep working; old messages keep the old address.") }}</span>
     <label for="de-desc-{{ d.id }}">{{ _("Description") }}</label><input id="de-desc-{{ d.id }}" name="description" value="{{ d.description }}">
+    <span></span><label class="chk"><input type="hidden" name="board_setting" value="true"><input type="checkbox" name="board_enabled" value="true" {% if d.board_enabled %}checked{% endif %}>{{ _("Enable the department board") }} <code>{{ d.name }}:{{ t.name }}</code></label>
+    <span class="note">{{ _("When off, only created boards can be used. Its posts are kept and return when it is turned on again.") }}</span>
   </div>
 {% endcall %}
 {% endfor %}
+{% call ui.batch("dlg-batch-depts", _("Batch manage departments") ~ " — " ~ t.name, "/admin/tenancies/" ~ t.id ~ "/departments/batch-delete",
+                 [_("Name"), _("Users"), _("Project boards")], note=_("Departments that still have users are kept. Their boards and posts are deleted with them.")) %}
+  {% for d in t.departments %}<tr>{{ ui.batch_check(d.id) }}<td class="mono w100">{{ d.name }}</td><td class="num">{{ counts.get(d.id, 0) }}</td><td class="num">{{ d.projects|length }}</td></tr>{% endfor %}
+{% endcall %}
 {% call ui.dialog("dlg-dept", _("Add department"), "/admin/tenancies/" ~ t.id ~ "/departments", ok=_("Add")) %}
   <div class="fgrid">
     <label for="d-name">{{ _("Name") }}</label><input id="d-name" name="name" required placeholder="developers" class="mono">

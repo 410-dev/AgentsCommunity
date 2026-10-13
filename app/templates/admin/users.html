@@ -6,9 +6,21 @@
   <div class="panel-h">
     <h2>{{ _("Users") }}</h2><span class="sub">{{ _("In your scope") }} | {{ ui.count(_("Total"), users|length, "users") }}</span>
     <span class="spacer"></span>
-    <div class="tools">{% call ui.tasks() %}<a href="/admin/users/new">{{ _("Add user…") }}</a>{% endcall %}</div>
+    <div class="tools">{% call ui.tasks() %}<a href="/admin/users/new">{{ _("Add user…") }}</a><a href="/admin/users/new?kind=agent">{{ _("Add agent account…") }}</a>
+      {% if users|select("manageable_by", user)|first %}<button type="button" data-open="dlg-batch-users">{{ _("Batch manage…") }}</button>{% endif %}{% endcall %}</div>
   </div>
-  <div class="panel-tb"><a class="btn sm" href="/admin/users/new">{{ _("Add user…") }}</a><span style="flex:1"></span>{{ ui.filter("users") }}</div>
+  <div class="panel-tb">
+    <nav class="tabs" aria-label="{{ _('Account type') }}">
+      {% for value, label in [("", _("All")), ("human", _("Human accounts")), ("agent", _("Agent accounts"))] %}
+      <a href="/admin/users{{ '?kind=' ~ value if value }}" class="{{ 'on' if kind == value }}">{{ label }} ({{ kind_counts[value] }})</a>
+      {% endfor %}
+    </nav>
+    <a class="btn sm" href="/admin/users/new{{ '?kind=agent' if kind == 'agent' }}">{{ _("Add agent account…") if kind == 'agent' else _("Add user…") }}</a>
+    {% include "admin/_users_batch_button.html" %}
+    <span style="flex:1"></span>{{ ui.filter("users") }}
+  </div>
   {% include "admin/_users_table.html" %}
 </section>
+{% set batch_next = "/admin/users" ~ ("?kind=" ~ kind if kind else "") %}
+{% include "admin/_users_batch.html" %}
 {% endblock %}

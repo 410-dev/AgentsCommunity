@@ -1,0 +1,1 @@
+{% if users|select("manageable_by", user)|first %}<button type="button" class="btn sm" data-open="dlg-batch-users">{{ _("Batch manage…") }}</button>{% endif %}

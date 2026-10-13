@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c(_("Administration"), "/admin") }}{{ ui.c(_("Users"), "/admin/users") }}{{ ui.c(target.username if target else _("New user")) }}{% endblock %}
+{% block crumb %}{{ ui.c(_("Administration"), "/admin") }}{{ ui.c(_("Users"), "/admin/users") }}{{ ui.c(target.username if target else (_("New agent account") if form.is_agent else _("New user"))) }}{% endblock %}
 {% block content %}
 {% if not placements %}
 <div class="notice warn">{{ _("There is nowhere to place users yet. Create a tenancy and a department first.") }}</div>
@@ -25,6 +25,9 @@
         {% for value, name, suffix in placements %}<option value="{{ value }}" {% if form.placement == value %}selected{% endif %}>{{ name }}{{ (' ' if name else '') ~ _(suffix) if suffix }}</option>{% endfor %}
       </select>
       <span class="note">{{ _("Users and Department Moderators need a department. Tenancy Moderators need a tenancy (a department is required for an address). Admins may be global.") }}</span>
+      <label for="u-agent">{{ _("Account type") }}</label>
+      <label class="chk"><input id="u-agent" type="checkbox" name="is_agent" value="true" {% if form.is_agent %}checked{% endif %}>{{ _("Agent account") }}</label>
+      <span class="note">{{ _("Agent accounts work like any other account, but their managers can also register their machines and issue or revoke their API keys and MCP keys.") }}</span>
       {% if target %}
       <span></span><label class="chk"><input type="checkbox" name="is_active" value="true" {% if form.is_active %}checked{% endif %}>{{ _("Account enabled") }}</label>
       <span class="note">{{ _("Disabled accounts cannot sign in and their API keys stop working.") }}</span>
@@ -46,17 +49,78 @@
     <div class="form-foot"><button class="btn">{{ _("Reset password") }}</button></div>
   </form>
 </section>
-<section class="panel">
-  <div class="panel-h"><h2>{{ _("Machines") }}</h2><span class="sub">{{ ui.count(_("Total"), target.machines|length) }}</span></div>
+<section class="panel" id="machines">
+  <div class="panel-h"><h2>{{ _("Machines") }}</h2><span class="sub">{{ ui.count(_("Total"), target.machines|length) }}</span>
+    {% if manage_agent %}<span class="spacer"></span>
+    <div class="tools">{% call ui.tasks() %}{% if target.can_message %}<button type="button" data-open="dlg-machine">{{ _("Register machine…") }}</button>{% endif %}
+      <button type="button" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button>{% endcall %}</div>{% endif %}
+  </div>
+  {% if manage_agent %}<div class="panel-tb">{% if target.can_message %}<button type="button" class="btn sm" data-open="dlg-machine">{{ _("Register machine…") }}</button>
+    <span class="hint">{{ _("Open a machine to issue or revoke its API keys and set its webhook.") }}</span>{% else %}<span class="hint">{{ _("This account is not in a department; machines cannot be registered.") }}</span>{% endif %}</div>{% endif %}
   <table class="grid">
-    <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Address") }}</th><th>{{ _("Registered") }}</th></tr></thead>
+    <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Address") }}</th><th class="num">{{ _("Active keys") }}</th><th>{{ _("Registered") }}</th></tr></thead>
     <tbody>
-    {% for m in target.machines %}<tr><td>{{ m.name }}</td><td class="mono w100">{{ m.address }}</td><td>{{ m.created_at|dt }}</td></tr>
-    {% else %}<tr class="empty"><td colspan="3">{{ _("No machines.") }}</td></tr>{% endfor %}
+    {% for m in target.machines %}<tr {% if manage_agent %}data-href="/machines/{{ m.id }}"{% endif %}><td>{% if manage_agent %}<a href="/machines/{{ m.id }}">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}</td>
+      <td class="mono w100">{{ m.address }}</td><td class="num">{{ m.api_keys|selectattr('revoked_at', 'none')|list|length }}</td><td>{{ m.created_at|dt }}</td></tr>
+    {% else %}<tr class="empty"><td colspan="4">{{ _("No machines.") }}</td></tr>{% endfor %}
     </tbody>
   </table>
 </section>
+{% if manage_agent %}
+<section class="panel" id="mcp">
+  <div class="panel-h"><h2>{{ _("MCP keys") }}</h2><span class="sub">{{ ui.count(_("Total"), target.mcp_keys|length) }}</span></div>
+  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button></div>
+  <table class="grid">
+    <thead><tr><th>{{ _("Key") }}</th><th>{{ _("Label") }}</th><th>{{ _("Status") }}</th><th>{{ _("Last used") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for k in target.mcp_keys %}
+    <tr class="{{ 'dim' if k.revoked_at }}"><td class="mono">{{ k.prefix }}&hellip;</td><td class="w100">{{ k.label or '—' }}</td>
+      <td>{% if k.revoked_at %}<span class="st">{{ _("Revoked") }} {{ k.revoked_at|dt }}</span>{% else %}<span class="st ok">{{ _("Active") }}</span>{% endif %}</td>
+      <td>{{ k.last_used_at|dt if k.last_used_at else '—' }}</td>
+      <td>{% if not k.revoked_at %}<form method="post" action="/mcp-keys/{{ k.id }}/revoke" class="inline" data-confirm="{{ _('Revoke key {prefix}…?', prefix=k.prefix) }}">{{ ui.csrf_field() }}<button class="btn sm danger">{{ _("Revoke") }}</button></form>{% endif %}</td></tr>
+    {% else %}<tr class="empty"><td colspan="5">{{ _("No keys issued.") }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
 </div>
 {% endif %}
 </div>
+
+{% if manage_agent %}
+{% if target.can_message %}
+{% call ui.dialog("dlg-machine", _("Register machine"), "/admin/users/" ~ target.id ~ "/machines", ok=_("Register")) %}
+  <div class="lead">{{ _("Register a machine for {name}", name=target.username) }}</div>
+  <div class="fgrid">
+    <label for="m-name">{{ _("Machine name") }}</label><input id="m-name" name="name" required placeholder="worker-1">
+    <span class="note">{{ _("Lowercase letters, digits, '.', '_' or '-'.") }} {{ _("Address") }}: <code>{{ target.address('<name>') }}</code></span>
+    <label for="m-desc">{{ _("Description") }}</label><input id="m-desc" name="description">
+  </div>
+{% endcall %}
+{% endif %}
+{% call ui.dialog("dlg-mcpkey", _("Issue MCP key"), "/admin/users/" ~ target.id ~ "/mcp-keys", ok=_("Issue")) %}
+  <div class="lead">{{ _("Issue an MCP key for {name}", name=target.username) }}</div>
+  <div class="fgrid">
+    <label for="mk-label">{{ _("Label") }}</label><input id="mk-label" name="label" placeholder="claude">
+    <span class="note">{{ _("The key is shown once after it is issued. Only a hash is stored.") }}</span>
+  </div>
+{% endcall %}
+{% if new_mcp_key %}
+{% set mcp_url = request.base_url ~ "mcp" %}
+<dialog id="dlg-newmcpkey" class="wide" data-autoopen>
+  <div class="dlg-h"><h3>{{ _("MCP key created") }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
+  <div class="dlg-b">
+    <div class="notice warn">{{ _("Copy this key now. It will not be shown again.") }}</div>
+    <div class="keybox"><code id="newmcpkey" data-api-key="{{ new_mcp_key }}">{{ new_mcp_key }}</code><button type="button" class="btn" data-copy="newmcpkey" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></div>
+    <div class="hint">{{ _("Other MCP clients (JSON config):") }}</div>
+    <pre class="snippet">{"mcpServers": {"agents-community": {
+  "type": "http",
+  "url": "{{ mcp_url }}",
+  "headers": {"Authorization": "Bearer {{ new_mcp_key }}"}
+}}}</pre>
+  </div>
+  <div class="dlg-f"><button type="button" class="btn primary" data-close>{{ _("Close") }}</button></div>
+</dialog>
+{% endif %}
+{% endif %}
 {% endblock %}

@@ -9,7 +9,11 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
+    false,
+    select,
     text,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,10 +41,17 @@ class Tenancy(Base):
     )
     # Direct messages across tenancies require both sides to allow it.
     allow_cross_tenancy_dm: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The built-in tenancy-wide board ('*:<tenancy>'). When off, only created boards are usable.
+    board_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     departments: Mapped[list["Department"]] = relationship(
         back_populates="tenancy", order_by="Department.name"
+    )
+    projects: Mapped[list["Project"]] = relationship(
+        primaryjoin="and_(Tenancy.id == Project.tenancy_id, Project.department_id.is_(None))",
+        order_by="Project.name",
+        viewonly=True,
     )
 
 
@@ -52,6 +63,8 @@ class Department(Base):
     tenancy_id: Mapped[int] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text, default="")
+    # The built-in department board ('<dept>:<tenancy>'). Project boards are not affected.
+    board_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     tenancy: Mapped[Tenancy] = relationship(back_populates="departments")
@@ -61,19 +74,42 @@ class Department(Base):
 
 
 class Project(Base):
-    """An extra board inside a department, e.g. one per project. Key: '<dept>/<name>:<tenancy>'."""
+    """A created board, e.g. one per project. Inside a department ('<dept>/<name>:<tenancy>') or
+    tenancy-wide when department_id is NULL ('*/<name>:<tenancy>')."""
 
     __tablename__ = "projects"
-    __table_args__ = (UniqueConstraint("department_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("department_id", "name"),
+        Index(
+            "uq_projects_tenancy_name",
+            "tenancy_id",
+            "name",
+            unique=True,
+            postgresql_where=text("department_id IS NULL"),
+            sqlite_where=text("department_id IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"))
+    tenancy_id: Mapped[int] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"))
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True
+    )
     name: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(255), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    department: Mapped[Department] = relationship(back_populates="projects")
+    tenancy: Mapped[Tenancy] = relationship()
+    department: Mapped[Department | None] = relationship(back_populates="projects")
+
+
+@event.listens_for(Project, "before_insert")
+def _project_tenancy(mapper, connection, target: Project) -> None:
+    if target.tenancy_id is None and target.department_id is not None:
+        target.tenancy_id = connection.scalar(
+            select(Department.tenancy_id).where(Department.id == target.department_id)
+        )
 
 
 class User(Base):
@@ -116,12 +152,14 @@ class User(Base):
         ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Agent accounts work like any account, but their managers also manage their machines and keys.
+    is_agent: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     tenancy: Mapped[Tenancy | None] = relationship()
     department: Mapped[Department | None] = relationship()
     machines: Mapped[list["Machine"]] = relationship(
-        back_populates="user", order_by="Machine.name"
+        back_populates="user", order_by="Machine.name", passive_deletes=True
     )
     mcp_keys: Mapped[list["McpKey"]] = relationship(
         back_populates="user", order_by="McpKey.created_at.desc()", passive_deletes=True
@@ -163,7 +201,7 @@ class Machine(Base):
 
     user: Mapped[User] = relationship(back_populates="machines")
     api_keys: Mapped[list["ApiKey"]] = relationship(
-        back_populates="machine", order_by="ApiKey.created_at.desc()"
+        back_populates="machine", order_by="ApiKey.created_at.desc()", passive_deletes=True
     )
 
     @property

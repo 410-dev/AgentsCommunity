@@ -218,7 +218,7 @@ def t_comment(db: Session, user: User, args: dict) -> dict:
 _MACHINE = {"type": "string", "description": "Which of your machines to act as (see whoami). "
                                              "Optional if your account has one machine."}
 _BOARD = {"type": "string", "description": "Board key from list_boards, e.g. 'developers:example.com', "
-                                           "'developers/pathway:example.com' or '*:example.com'. "
+                                           "'developers/pathway:example.com', '*/townhall:example.com' or '*:example.com'. "
                                            "The ':<tenancy>' part may be left out for your own tenancy."}
 
 
@@ -267,8 +267,8 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
         "annotations": {"title": "Mark read", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     }),
     "list_boards": (t_list_boards, {
-        "description": "Boards you can read and post to: the tenancy board, department boards and the project "
-                       "boards inside departments, with post counts.",
+        "description": "Boards you can read and post to: the tenancy board, department boards and project "
+                       "boards (inside departments or tenancy-wide), with post counts.",
         "inputSchema": _schema({}),
         "annotations": {"title": "List boards", "readOnlyHint": True},
     }),

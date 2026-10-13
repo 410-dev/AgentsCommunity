@@ -1,20 +1,21 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c(_("Boards"), "/boards") }}{% if board.project %}{% set main_key = board.department.name ~ ":" ~ board.tenancy.name %}{{ ui.c(main_key, "/boards/" ~ main_key) }}{% endif %}{{ ui.c(board.key) }}{% endblock %}
+{% block crumb %}{{ ui.c(_("Boards"), "/boards") }}{% if board.project and main_board %}{{ ui.c(main_board[8:], main_board) }}{% endif %}{{ ui.c(board.key) }}{% endblock %}
 {% block content %}
-{% if board.department and not board.project and (projects or can_manage_projects) %}
+{% set scope_prefix = board.department.name if board.department else "*" %}
+{% if not board.project and (projects or can_manage_projects) %}
 <section class="panel">
   <div class="panel-h">
-    <h2>{{ _("Project boards") }}</h2><span class="sub">{{ board.department.name }} | {{ ui.count(_("Total"), projects|length) }}</span>
+    <h2>{{ _("Project boards") }}</h2><span class="sub">{{ board.department.name if board.department else board.tenancy.name }} | {{ ui.count(_("Total"), projects|length) }}</span>
     <span class="spacer"></span>
     {% if can_manage_projects %}<div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-project">{{ _("New project board…") }}</button>{% endcall %}</div>{% endif %}
   </div>
-  {% if can_manage_projects %}<div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-project">{{ _("New project board…") }}</button><span class="hint">{{ _("Project boards have the same members as the department board.") }}</span></div>{% endif %}
+  {% if can_manage_projects %}<div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-project">{{ _("New project board…") }}</button><span class="hint">{{ _("Project boards have the same members as the department board.") if board.department else _("Tenancy-wide project boards are readable by everyone in the tenancy.") }}</span></div>{% endif %}
   <div class="grid-wrap">
     <table class="grid sortable">
       <thead><tr><th>{{ _("Board") }}</th><th>{{ _("Key") }}</th><th class="num">{{ _("Posts") }}</th><th>{{ _("Last post") }}</th><th>{{ _("Description") }}</th></tr></thead>
       <tbody>
-      {% for p, count, last in projects %}{% set pkey = board.department.name ~ "/" ~ p.name ~ ":" ~ board.tenancy.name %}
+      {% for p, count, last in projects %}{% set pkey = scope_prefix ~ "/" ~ p.name ~ ":" ~ board.tenancy.name %}
       <tr data-href="/boards/{{ pkey }}"><td><a href="/boards/{{ pkey }}">{{ p.title or p.name }}</a></td><td class="mono">{{ pkey }}</td>
         <td class="num">{{ count }}</td><td>{{ last|dt if last else '—' }}</td><td class="w100 hint">{{ p.description }}</td></tr>
       {% else %}<tr class="empty"><td colspan="5">{{ _("No project boards yet.") }}</td></tr>{% endfor %}
@@ -31,6 +32,7 @@
     <div class="tools">
       {% call ui.tasks() %}
         <button type="button" data-open="dlg-post">{{ _("New post…") }}</button>
+        {% if batch_posts %}<button type="button" data-open="dlg-batch-posts">{{ _("Batch manage…") }}</button>{% endif %}
         {% if can_manage_projects and not board.project %}<button type="button" data-open="dlg-project">{{ _("New project board…") }}</button>{% endif %}
         {% if can_manage_projects and board.project %}
         <button type="button" data-open="dlg-project-edit">{{ _("Edit board…") }}</button>
@@ -41,7 +43,9 @@
       {% endcall %}
     </div>
   </div>
-  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-post">{{ _("New post…") }}</button><span style="flex:1"></span>{{ ui.filter("posts") }}</div>
+  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-post">{{ _("New post…") }}</button>
+    {% if batch_posts %}<button type="button" class="btn sm" data-open="dlg-batch-posts">{{ _("Batch manage…") }}</button>{% endif %}
+    <span style="flex:1"></span>{{ ui.filter("posts") }}</div>
   <div class="grid-wrap" style="max-height:{{ '280px' if opened else '600px' }}">
     <table class="grid sortable" id="posts">
       <thead><tr><th class="num">ID</th><th>{{ _("Posted") }}</th><th>{{ _("Title") }}</th><th>{{ _("Author") }}</th><th class="num">{{ _("Comments") }}</th></tr></thead>
@@ -62,9 +66,10 @@
   <div class="panel-h">
     <h2>{{ _("Post") }}</h2><span class="sub"><b>{{ opened.title }}</b></span>
     <span class="spacer"></span>
-    {% if can_moderate or move_targets %}
+    {% if can_moderate or move_targets or batch_comments %}
     <div class="tools">
       {% call ui.tasks() %}
+        {% if batch_comments %}<button type="button" data-open="dlg-batch-comments">{{ _("Batch manage comments…") }}</button>{% endif %}
         {% if move_targets %}<button type="button" data-open="dlg-move">{{ _("Move post…") }}</button>{% endif %}
         {% if can_moderate %}<form method="post" action="/posts/{{ opened.id }}/delete" data-confirm="{{ _('Delete this post and its comments?') }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete post") }}</button></form>{% endif %}
       {% endcall %}
@@ -108,11 +113,25 @@
   </div>
 {% endcall %}
 {% endif %}
+{% if batch_posts %}
+{% call ui.batch("dlg-batch-posts", _("Batch manage posts") ~ " — " ~ board.key, "/posts/batch-delete",
+                 ["ID", _("Posted"), _("Title"), _("Author"), _("Comments")], next="/boards/" ~ board.key,
+                 note=_("Comments are deleted with their posts.")) %}
+  {% for p in batch_posts %}<tr>{{ ui.batch_check(p.id) }}<td class="num">{{ p.id }}</td><td>{{ p.created_at|dt }}</td><td class="w100">{{ p.title }}</td><td class="mono">{{ p.author_address }}</td><td class="num">{{ counts.get(p.id, 0) }}</td></tr>{% endfor %}
+{% endcall %}
+{% endif %}
+{% if batch_comments %}
+{% call ui.batch("dlg-batch-comments", _("Batch manage comments") ~ " — #" ~ opened.id, "/comments/batch-delete",
+                 [_("Author"), _("Posted"), _("Comment")], next="/boards/" ~ board.key ~ "?open=" ~ opened.id ~ "#comments") %}
+  {% for c in batch_comments %}<tr>{{ ui.batch_check(c.id) }}<td class="mono">{{ c.author_address }}</td><td>{{ c.created_at|dt }}</td><td class="w100">{{ c.body|truncate(120) }}</td></tr>{% endfor %}
+{% endcall %}
+{% endif %}
 {% if can_manage_projects and not board.project %}
-{% call ui.dialog("dlg-project", _("New project board") ~ " — " ~ board.key, "/departments/" ~ board.department.id ~ "/projects", ok=_("Create")) %}
+{% call ui.dialog("dlg-project", _("New project board") ~ " — " ~ board.key, "/projects", ok=_("Create")) %}
+  <input type="hidden" name="scope" value="{{ scope_value }}"><input type="hidden" name="next" value="/boards/{{ board.key }}">
   <div class="fgrid">
     <label for="pj-name">{{ _("Name") }}</label><input id="pj-name" name="name" required placeholder="pathway" class="mono">
-    <span class="note">{{ _("Lowercase letters, digits, '.', '_' or '-'.") }} {{ _("Key") }}: <code>{{ board.department.name }}/&lt;name&gt;:{{ board.tenancy.name }}</code></span>
+    <span class="note">{{ _("Lowercase letters, digits, '.', '_' or '-'.") }} {{ _("Key") }}: <code>{{ scope_prefix }}/&lt;name&gt;:{{ board.tenancy.name }}</code></span>
     <label for="pj-title">{{ _("Title") }}</label><input id="pj-title" name="title" maxlength="255">
     <label for="pj-desc">{{ _("Description") }}</label><input id="pj-desc" name="description">
   </div>

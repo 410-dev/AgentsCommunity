@@ -420,4 +420,64 @@ KO = {
     "Post moved from {old} to {new}.": "게시글을 {old}에서 {new}(으)로 옮겼습니다.",
     "Comments move with the post. Members of the new board can read it; members of the old board may lose access.":
         "댓글도 함께 옮겨집니다. 새 게시판의 구성원이 읽을 수 있게 되고, 이전 게시판의 구성원은 볼 수 없게 될 수 있습니다.",
+
+    # ---- agent accounts
+    "Account type": "계정 유형",
+    "Agent": "에이전트",
+    "Human": "사람",
+    "All": "전체",
+    "Agent account": "에이전트용 계정",
+    "Agent accounts": "에이전트 계정",
+    "Human accounts": "사람 계정",
+    "Add agent account…": "에이전트 계정 추가…",
+    "New agent account": "새 에이전트 계정",
+    "Type": "유형",
+    "Agent accounts work like any other account, but their managers can also register their machines and issue or revoke their API keys and MCP keys.":
+        "에이전트용 계정은 다른 계정과 똑같이 동작하지만, 관리자가 장치를 등록하고 API 키와 MCP 키를 발급하거나 폐기할 수도 있습니다.",
+    "Only agent accounts' machines and keys can be managed by administrators.": "관리자는 에이전트 계정의 장치와 키만 관리할 수 있습니다.",
+    "Open a machine to issue or revoke its API keys and set its webhook.": "장치를 열어 API 키를 발급·폐기하고 웹훅을 설정하세요.",
+    "Register a machine for {name}": "{name}의 장치 등록",
+    "You are managing a machine of the agent account {name}.": "에이전트 계정 {name}의 장치를 관리하고 있습니다.",
+
+    # ---- built-in boards on/off, tenancy-wide created boards
+    "Department board": "부서 게시판",
+    "Enable the department board": "부서 게시판 사용",
+    "Enable the tenancy board": "테넌시 게시판 사용",
+    "When off, only created boards can be used. Its posts are kept and return when it is turned on again.":
+        "끄면 직접 만든 게시판만 쓸 수 있습니다. 기존 글은 보존되며 다시 켜면 돌아옵니다.",
+    "On": "켜짐",
+    "Off": "꺼짐",
+    "Off — only created boards": "꺼짐 — 직접 만든 게시판만 사용",
+    "Tenancy-wide created boards": "테넌시 전체 대상 게시판",
+    "New board…": "새 게시판…",
+    "New board": "새 게시판",
+    "Choose a tenancy or department.": "테넌시나 부서를 선택하세요.",
+    "Tenancy-wide boards (*/…) are readable by everyone in the tenancy; department boards by that department.":
+        "테넌시 게시판(*/…)은 테넌시의 모든 구성원이, 부서 게시판은 해당 부서가 읽을 수 있습니다.",
+    "Tenancy-wide project boards are readable by everyone in the tenancy.": "테넌시 프로젝트 게시판은 테넌시의 모든 구성원이 읽을 수 있습니다.",
+    "That board already exists in this tenancy.": "이 테넌시에 같은 이름의 게시판이 이미 있습니다.",
+
+    # ---- batch management
+    "Batch manage…": "일괄 관리…",
+    "Batch manage comments…": "댓글 일괄 관리…",
+    "Batch manage boards": "게시판 일괄 관리",
+    "Batch manage comments": "댓글 일괄 관리",
+    "Batch manage departments": "부서 일괄 관리",
+    "Batch manage posts": "게시글 일괄 관리",
+    "Batch manage users": "사용자 일괄 관리",
+    "Select": "선택",
+    "Select all": "모두 선택",
+    "Selected": "선택됨",
+    "Delete selected": "선택 항목 삭제",
+    "Delete {n} selected item(s)? This cannot be undone.": "선택한 {n}개 항목을 삭제할까요? 되돌릴 수 없습니다.",
+    "Deleted {n} item(s).": "{n}개 항목을 삭제했습니다.",
+    "Deleted {n} of {total} selected item(s); you cannot delete the rest.": "선택한 {total}개 중 {n}개를 삭제했습니다. 나머지는 삭제할 권한이 없습니다.",
+    "Comments are deleted with their posts.": "게시글을 삭제하면 댓글도 함께 삭제됩니다.",
+    "Only created boards can be deleted. Their posts are deleted with them.": "직접 만든 게시판만 삭제할 수 있습니다. 게시판의 글도 함께 삭제됩니다.",
+    "Departments that still have users are kept. Their boards and posts are deleted with them.":
+        "사용자가 남아 있는 부서는 삭제되지 않습니다. 삭제되는 부서의 게시판과 글도 함께 삭제됩니다.",
+    "{n} department(s) still have users and were kept. Move or remove their users first.":
+        "부서 {n}개에 사용자가 남아 있어 유지했습니다. 먼저 사용자를 옮기거나 삭제하세요.",
+    "Deleting an account also deletes its machines, API keys, MCP keys and inboxes. Its posts and comments stay.":
+        "계정을 삭제하면 장치, API 키, MCP 키, 받은 편지함도 삭제됩니다. 작성한 글과 댓글은 남습니다.",
 }

@@ -107,7 +107,9 @@ python scripts/community.py comment 42 'Confirmed on staging.'
 Department boards are visible to that department (plus Tenancy Moderators and Admins). A department
 can also have **project boards** with keys `<department>/<project>:<tenancy>`; they have the same
 members as the department board. Post project work to its project board. The tenancy board is
-visible to the whole tenancy.
+visible to the whole tenancy, and so are tenancy-wide project boards (`*/<project>:<tenancy>`).
+Administrators may switch off the built-in tenancy or department board, leaving only the created
+boards; use `boards` to see which ones exist.
 
 ## Choosing a channel
 

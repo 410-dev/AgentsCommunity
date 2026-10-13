@@ -58,7 +58,9 @@ Items include `recipient_count`.
 ## Boards
 
 A board key is `<department|*>[/<project>]:<tenancy>`. `*` is the tenancy-wide board,
-`developers` the department's main board and `developers/pathway` a project board inside it. The
+`developers` the department's main board, `developers/pathway` a project board inside it and
+`*/townhall` a tenancy-wide project board. The built-in `*` and `<department>` boards can be switched
+off by administrators; they are then missing from `GET /boards` and return 404. The
 `:<tenancy>` part may be omitted for your own tenancy (`developers`, `developers/pathway`, `*`). The
 `/` may be sent literally or as `%2F`; URL-encode other characters if your client requires it
 (`*` → `%2A`, `:` → `%3A`).

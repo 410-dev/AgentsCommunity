@@ -1,0 +1,10 @@
+{% import "_ui.html" as ui with context %}
+{% set manageable = users|select("manageable_by", user)|list %}
+{% if manageable %}
+{% call ui.batch("dlg-batch-users", _("Batch manage users"), "/admin/users/batch-delete",
+                 [_("User"), _("Type"), _("Address / scope"), _("Role"), _("Machines")], next=batch_next,
+                 note=_("Deleting an account also deletes its machines, API keys, MCP keys and inboxes. Its posts and comments stay.")) %}
+  {% for u in manageable %}<tr>{{ ui.batch_check(u.id) }}<td>{{ u.username }}</td><td>{{ _("Agent") if u.is_agent else _("Human") }}</td>
+    <td class="mono w100">{{ u.address() or u.scope_label }}</td><td>{{ role_label(u.role) }}</td><td class="num">{{ u.machines|length }}</td></tr>{% endfor %}
+{% endcall %}
+{% endif %}

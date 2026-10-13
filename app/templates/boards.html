@@ -5,8 +5,19 @@
 <section class="panel">
   <div class="panel-h">
     <h2>{{ _("Boards") }}</h2><span class="sub">{{ _("Accessible boards") }} | {{ ui.count(_("Total"), boards|length, "boards") }}</span>
+    {% if scopes or deletable %}
+    <span class="spacer"></span>
+    <div class="tools">{% call ui.tasks() %}
+      {% if scopes %}<button type="button" data-open="dlg-newboard">{{ _("New board…") }}</button>{% endif %}
+      {% if deletable %}<button type="button" data-open="dlg-batch-boards">{{ _("Batch manage…") }}</button>{% endif %}
+    {% endcall %}</div>
+    {% endif %}
   </div>
-  <div class="panel-tb"><span class="hint">{{ _("Posts are kept, so members who join later can read the full history.") }}</span><span style="flex:1"></span>{{ ui.filter("boards") }}</div>
+  <div class="panel-tb">
+    {% if scopes %}<button type="button" class="btn sm" data-open="dlg-newboard">{{ _("New board…") }}</button>{% endif %}
+    {% if deletable %}<button type="button" class="btn sm" data-open="dlg-batch-boards">{{ _("Batch manage…") }}</button>{% endif %}
+    <span class="hint">{{ _("Posts are kept, so members who join later can read the full history.") }}</span><span style="flex:1"></span>{{ ui.filter("boards") }}
+  </div>
   <div class="grid-wrap tall">
     <table class="grid sortable" id="boards">
       <thead><tr><th>{{ _("Board") }}</th><th>{{ _("Key") }}</th><th>{{ _("Scope") }}</th><th class="num">{{ _("Posts") }}</th><th>{{ _("Last post") }}</th></tr></thead>
@@ -20,4 +31,26 @@
     </table>
   </div>
 </section>
+
+{% if scopes %}
+{% call ui.dialog("dlg-newboard", _("New board"), "/projects", ok=_("Create")) %}
+  <div class="fgrid">
+    <label for="nb-scope">{{ _("Scope") }}</label>
+    <select id="nb-scope" name="scope" class="mono" required>
+      {% for value, label in scopes %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <span class="note">{{ _("Tenancy-wide boards (*/…) are readable by everyone in the tenancy; department boards by that department.") }}</span>
+    <label for="nb-name">{{ _("Name") }}</label><input id="nb-name" name="name" required placeholder="pathway" class="mono">
+    <span class="note">{{ _("Lowercase letters, digits, '.', '_' or '-'.") }}</span>
+    <label for="nb-title">{{ _("Title") }}</label><input id="nb-title" name="title" maxlength="255">
+    <label for="nb-desc">{{ _("Description") }}</label><input id="nb-desc" name="description">
+  </div>
+{% endcall %}
+{% endif %}
+{% if deletable %}
+{% call ui.batch("dlg-batch-boards", _("Batch manage boards"), "/projects/batch-delete",
+                 [_("Board"), _("Key"), _("Posts")], note=_("Only created boards can be deleted. Their posts are deleted with them.")) %}
+  {% for b in deletable %}<tr>{{ ui.batch_check(b.project.id) }}<td class="w100">{{ ui.board_title(b) }}</td><td class="mono">{{ b.key }}</td><td class="num">{{ stats[b.key][0] }}</td></tr>{% endfor %}
+{% endcall %}
+{% endif %}
 {% endblock %}

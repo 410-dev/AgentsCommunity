@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
@@ -18,6 +18,8 @@ from ..models import (
 from ..permissions import (
     assignable_roles,
     can_create_tenancy,
+    can_manage_agent,
+    can_manage_credentials,
     can_manage_projects,
     can_manage_tenancy,
     can_access_board,
@@ -42,6 +44,7 @@ from ..webhooks import validate_webhook_url
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 templates.env.globals.update(role_label=role_label, Role=Role)
+templates.env.tests["manageable_by"] = lambda target, actor: can_manage_user(actor, target)
 templates.env.filters["dt"] = lambda v, seconds=False: v.strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M") if v else ""
 
 router = APIRouter(dependencies=[Depends(csrf_protect)], include_in_schema=False)
@@ -90,6 +93,11 @@ def redirect(url: str) -> RedirectResponse:
 
 def forbid() -> HTTPException:
     return HTTPException(403, "You do not have permission to do that.")
+
+
+def safe_next(url: str, default: str) -> str:
+    """A local path to return to after a form post (never an absolute or protocol-relative URL)."""
+    return url if url.startswith("/") and not url.startswith("//") else default
 
 
 # ---- setup & auth -----------------------------------------------------------
@@ -254,6 +262,19 @@ def _own_machine(db: Session, user: User, machine_id: int | None) -> Machine | N
     return m
 
 
+def _managed_machine(db: Session, user: User, machine_id: int) -> Machine:
+    """A machine of the user's own, or of an agent account the user manages."""
+    m = db.get(Machine, machine_id)
+    if m is None or not can_manage_credentials(user, m.user):
+        raise HTTPException(404, "Machine not found")
+    return m
+
+
+def _owner_url(user: User, owner: User, own: str) -> str:
+    """Where to return after changing `owner`'s machines or keys."""
+    return own if owner.id == user.id else f"/admin/users/{owner.id}"
+
+
 @router.get("/messages")
 def messages(
     request: Request,
@@ -347,11 +368,23 @@ def message_mark_read(request: Request, delivery_id: int, user: User = Depends(c
 # ---- boards -----------------------------------------------------------------
 
 
+def _project_scopes(db: Session, user: User) -> list[tuple[str, str]]:
+    """Where `user` may create boards: ('t:<id>', '*/…:<tenancy>') and ('d:<id>', '<dept>/…:<tenancy>')."""
+    opts = []
+    for t in _visible_tenancies(db, user):
+        if can_manage_projects(user, t, None):
+            opts.append((f"t:{t.id}", f"*/…:{t.name}"))
+        opts.extend((f"d:{d.id}", f"{d.name}/…:{t.name}") for d in t.departments if can_manage_projects(user, t, d))
+    return opts
+
+
 @router.get("/boards")
 def boards_index(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     boards = boardsvc.accessible_boards(db, user)
     stats = {b.key: boardsvc.board_stats(db, b) for b in boards}
-    return render(request, "boards.html", user, boards=boards, stats=stats)
+    deletable = [b for b in boards if b.project and can_manage_projects(user, b.tenancy, b.department)]
+    return render(request, "boards.html", user, boards=boards, stats=stats, scopes=_project_scopes(db, user),
+                  deletable=deletable)
 
 
 def _board_or_404(db: Session, user: User, key: str) -> boardsvc.Board:
@@ -376,16 +409,29 @@ def board_view(
     if opened is not None and boardsvc.Board.of(opened).key != board.key:
         opened = None
     projects = []
-    if board.department is not None and board.project is None:
+    if board.project is None:
+        scope_projects = board.department.projects if board.department else board.tenancy.projects
         projects = [(p, *boardsvc.board_stats(db, boardsvc.Board(board.tenancy, board.department, p)))
-                    for p in board.department.projects]
+                    for p in scope_projects]
+    can_moderate = bool(opened and can_moderate_post(user, opened))
     return render(
         request, "board.html", user, board=board, posts=posts, counts=boardsvc.comment_counts(db, posts),
-        opened=opened, can_moderate=bool(opened and can_moderate_post(user, opened)), projects=projects,
+        opened=opened, can_moderate=can_moderate, projects=projects,
         move_targets=[b for b in boardsvc.accessible_boards(db, user) if b.key != board.key]
         if opened and can_move_post(user, opened) else [],
-        can_manage_projects=bool(board.department and can_manage_projects(user, board.department)),
+        can_manage_projects=can_manage_projects(user, board.tenancy, board.department),
+        scope_value=f"d:{board.department.id}" if board.department else f"t:{board.tenancy.id}",
+        main_board=_main_board_url(board.tenancy, board.department),
+        batch_posts=[p for p in posts if can_moderate_post(user, p)],
+        batch_comments=[c for c in opened.comments if c.author_id == user.id or can_moderate] if opened else [],
     )
+
+
+def _main_board_url(tenancy: Tenancy, department: Department | None) -> str | None:
+    """URL of a scope's built-in board, or None while it is switched off."""
+    if not boardsvc.is_enabled(tenancy, department, None):
+        return None
+    return f"/boards/{boardsvc.Board(tenancy, department).key}"
 
 
 def _post_url(post: Post) -> str:
@@ -473,7 +519,51 @@ def comment_delete(request: Request, comment_id: int, user: User = Depends(curre
     return redirect(url)
 
 
-# ---- project boards (inside a department) -----------------------------------
+@router.post("/posts/batch-delete")
+def posts_batch_delete(
+    request: Request,
+    ids: list[int] = Form([]),
+    next: str = Form("/boards"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    deleted = 0
+    for post in db.scalars(select(Post).where(Post.id.in_(ids))):
+        if boardsvc.user_can_read_post(user, post) and can_moderate_post(user, post):
+            db.delete(post)
+            deleted += 1
+    db.commit()
+    _flash_batch(request, deleted, len(ids))
+    return redirect(safe_next(next, "/boards"))
+
+
+@router.post("/comments/batch-delete")
+def comments_batch_delete(
+    request: Request,
+    ids: list[int] = Form([]),
+    next: str = Form("/boards"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    deleted = 0
+    for c in db.scalars(select(Comment).where(Comment.id.in_(ids))):
+        if boardsvc.user_can_read_post(user, c.post) and (c.author_id == user.id or can_moderate_post(user, c.post)):
+            db.delete(c)
+            deleted += 1
+    db.commit()
+    _flash_batch(request, deleted, len(ids))
+    return redirect(safe_next(next, "/boards"))
+
+
+def _flash_batch(request: Request, deleted: int, requested: int) -> None:
+    if deleted < requested:
+        flash(request, "Deleted {n} of {total} selected item(s); you cannot delete the rest.", "warn",
+              n=deleted, total=requested)
+    else:
+        flash(request, "Deleted {n} item(s).", "success", n=deleted)
+
+
+# ---- created (project) boards: inside a department or tenancy-wide ---------
 
 
 def _project_form(request: Request, name: str, title: str, description: str) -> tuple[str, str, str] | None:
@@ -484,8 +574,53 @@ def _project_form(request: Request, name: str, title: str, description: str) -> 
     return name, title.strip()[:255], description.strip()
 
 
-@router.post("/departments/{department_id}/projects")
+def _create_project(
+    request: Request, db: Session, user: User, tenancy: Tenancy, department: Department | None,
+    name: str, title: str, description: str, back: str | None,
+):
+    if not can_access_board(user, tenancy.id, department.id if department else None):
+        raise HTTPException(404, "Department not found" if department else "Tenancy not found")
+    if not can_manage_projects(user, tenancy, department):
+        raise forbid()
+    back = back or _main_board_url(tenancy, department) or "/boards"
+    form = _project_form(request, name, title, description)
+    if form is None:
+        return redirect(back)
+    p = Project(tenancy_id=tenancy.id, department_id=department.id if department else None,
+                name=form[0], title=form[1], description=form[2])
+    db.add(p)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        flash(request, "That board already exists in this department." if department
+              else "That board already exists in this tenancy.", "error")
+        return redirect(back)
+    key = boardsvc.Board(tenancy, department, p).key
+    flash(request, "Project board {name} created.", "success", name=key)
+    return redirect(f"/boards/{key}")
+
+
+@router.post("/projects")
 def project_create(
+    request: Request,
+    scope: str = Form(...),
+    name: str = Form(...),
+    title: str = Form(""),
+    description: str = Form(""),
+    next: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    tenancy, department = _parse_placement(db, scope)
+    if tenancy is None:
+        raise HTTPException(400, "Choose a tenancy or department.")
+    return _create_project(request, db, user, tenancy, department, name, title, description,
+                           safe_next(next, "") or None)
+
+
+@router.post("/departments/{department_id}/projects")
+def department_project_create(
     request: Request,
     department_id: int,
     name: str = Form(...),
@@ -495,32 +630,16 @@ def project_create(
     db: Session = Depends(get_db),
 ):
     d = db.get(Department, department_id)
-    if d is None or not can_access_board(user, d.tenancy_id, d.id):
+    if d is None:
         raise HTTPException(404, "Department not found")
-    if not can_manage_projects(user, d):
-        raise forbid()
-    main_board = boardsvc.Board(d.tenancy, d).key
-    form = _project_form(request, name, title, description)
-    if form is None:
-        return redirect(f"/boards/{main_board}")
-    p = Project(department_id=d.id, name=form[0], title=form[1], description=form[2])
-    db.add(p)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        flash(request, "That board already exists in this department.", "error")
-        return redirect(f"/boards/{main_board}")
-    key = boardsvc.Board(d.tenancy, d, p).key
-    flash(request, "Project board {name} created.", "success", name=key)
-    return redirect(f"/boards/{key}")
+    return _create_project(request, db, user, d.tenancy, d, name, title, description, None)
 
 
 def _managed_project(db: Session, user: User, project_id: int) -> Project:
     p = db.get(Project, project_id)
-    if p is None or not can_access_board(user, p.department.tenancy_id, p.department_id):
+    if p is None or not can_access_board(user, p.tenancy_id, p.department_id):
         raise HTTPException(404, "Board not found")
-    if not can_manage_projects(user, p.department):
+    if not can_manage_projects(user, p.tenancy, p.department):
         raise forbid()
     return p
 
@@ -536,7 +655,7 @@ def project_edit(
     db: Session = Depends(get_db),
 ):
     p = _managed_project(db, user, project_id)
-    old_key = boardsvc.Board(p.department.tenancy, p.department, p).key
+    old_key = boardsvc.Board(p.tenancy, p.department, p).key
     form = _project_form(request, name, title, description)
     if form is None:
         return redirect(f"/boards/{old_key}")
@@ -545,20 +664,35 @@ def project_edit(
         db.commit()
     except IntegrityError:
         db.rollback()
-        flash(request, "That board already exists in this department.", "error")
+        flash(request, "That board already exists in this department." if p.department
+              else "That board already exists in this tenancy.", "error")
         return redirect(f"/boards/{old_key}")
     flash(request, "Board saved.", "success")
-    return redirect(f"/boards/{boardsvc.Board(p.department.tenancy, p.department, p).key}")
+    return redirect(f"/boards/{boardsvc.Board(p.tenancy, p.department, p).key}")
 
 
 @router.post("/projects/{project_id}/delete")
 def project_delete(request: Request, project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     p = _managed_project(db, user, project_id)
-    main_board = boardsvc.Board(p.department.tenancy, p.department).key
+    back = _main_board_url(p.tenancy, p.department) or "/boards"
     db.delete(p)
     db.commit()
     flash(request, "Project board deleted (including its posts).", "success")
-    return redirect(f"/boards/{main_board}")
+    return redirect(back)
+
+
+@router.post("/projects/batch-delete")
+def projects_batch_delete(
+    request: Request, ids: list[int] = Form([]), user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    deleted = 0
+    for p in db.scalars(select(Project).where(Project.id.in_(ids))):
+        if can_access_board(user, p.tenancy_id, p.department_id) and can_manage_projects(user, p.tenancy, p.department):
+            db.delete(p)
+            deleted += 1
+    db.commit()
+    _flash_batch(request, deleted, len(ids))
+    return redirect("/boards")
 
 
 # ---- account, machines & API keys -------------------------------------------
@@ -582,13 +716,13 @@ def mcp_key_create(request: Request, label: str = Form(""), user: User = Depends
 @router.post("/mcp-keys/{key_id}/revoke")
 def mcp_key_revoke(request: Request, key_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     k = db.get(McpKey, key_id)
-    if k is None or k.user_id != user.id:
+    if k is None or not can_manage_credentials(user, k.user):
         raise HTTPException(404, "Key not found")
     if k.revoked_at is None:
         k.revoked_at = utcnow()
         db.commit()
     flash(request, "Key {prefix}… revoked.", "success", prefix=k.prefix)
-    return redirect("/account#mcp")
+    return redirect(_owner_url(user, k.user, "/account") + "#mcp")
 
 
 @router.post("/account/password")
@@ -613,6 +747,23 @@ def change_password(
     return redirect("/account")
 
 
+def _register_machine(request: Request, db: Session, owner: User, name: str, description: str, back: str):
+    name = name.strip().lower()
+    if not owner.can_message:
+        flash(request, "Your account must belong to a department before registering machines.", "error")
+    elif not valid_name(name):
+        flash(request, "Machine name must be lowercase letters, digits, '.', '_' or '-'.", "error")
+    elif any(m.name == name for m in owner.machines):
+        flash(request, "You already have a machine with that name.", "error")
+    else:
+        m = Machine(user_id=owner.id, name=name, description=description.strip(), webhook_secret=generate_webhook_secret())
+        db.add(m)
+        db.commit()
+        flash(request, "Machine registered: {address}", "success", address=m.address)
+        return redirect(f"/machines/{m.id}")
+    return redirect(back)
+
+
 @router.post("/machines")
 def machine_create(
     request: Request,
@@ -621,25 +772,12 @@ def machine_create(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    name = name.strip().lower()
-    if not user.can_message:
-        flash(request, "Your account must belong to a department before registering machines.", "error")
-    elif not valid_name(name):
-        flash(request, "Machine name must be lowercase letters, digits, '.', '_' or '-'.", "error")
-    elif any(m.name == name for m in user.machines):
-        flash(request, "You already have a machine with that name.", "error")
-    else:
-        m = Machine(user_id=user.id, name=name, description=description.strip(), webhook_secret=generate_webhook_secret())
-        db.add(m)
-        db.commit()
-        flash(request, "Machine registered: {address}", "success", address=m.address)
-        return redirect(f"/machines/{m.id}")
-    return redirect("/account")
+    return _register_machine(request, db, user, name, description, "/account")
 
 
 @router.get("/machines/{machine_id}")
 def machine_view(request: Request, machine_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    m = _own_machine(db, user, machine_id)
+    m = _managed_machine(db, user, machine_id)
     failed = db.scalar(
         select(func.count()).where(MessageDelivery.machine_id == m.id, MessageDelivery.webhook_status == "failed")
     )
@@ -650,7 +788,7 @@ def machine_view(request: Request, machine_id: int, user: User = Depends(current
 def key_create(
     request: Request, machine_id: int, label: str = Form(""), user: User = Depends(current_user), db: Session = Depends(get_db)
 ):
-    m = _own_machine(db, user, machine_id)
+    m = _managed_machine(db, user, machine_id)
     raw, prefix, digest = generate_api_key()
     db.add(ApiKey(machine_id=m.id, label=label.strip()[:128], prefix=prefix, key_hash=digest))
     db.commit()
@@ -662,7 +800,7 @@ def key_create(
 @router.post("/keys/{key_id}/revoke")
 def key_revoke(request: Request, key_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     k = db.get(ApiKey, key_id)
-    if k is None or k.machine.user_id != user.id:
+    if k is None or not can_manage_credentials(user, k.machine.user):
         raise HTTPException(404, "Key not found")
     if k.revoked_at is None:
         k.revoked_at = utcnow()
@@ -679,7 +817,7 @@ def machine_webhook(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    m = _own_machine(db, user, machine_id)
+    m = _managed_machine(db, user, machine_id)
     url = webhook_url.strip()
     if url:
         error = validate_webhook_url(url)
@@ -694,7 +832,7 @@ def machine_webhook(
 
 @router.post("/machines/{machine_id}/webhook/rotate")
 def machine_webhook_rotate(request: Request, machine_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    m = _own_machine(db, user, machine_id)
+    m = _managed_machine(db, user, machine_id)
     m.webhook_secret = generate_webhook_secret()
     db.commit()
     flash(request, "Webhook secret rotated.", "success")
@@ -703,7 +841,7 @@ def machine_webhook_rotate(request: Request, machine_id: int, user: User = Depen
 
 @router.post("/machines/{machine_id}/webhook/retry")
 def machine_webhook_retry(request: Request, machine_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    m = _own_machine(db, user, machine_id)
+    m = _managed_machine(db, user, machine_id)
     for d in db.scalars(select(MessageDelivery).where(MessageDelivery.machine_id == m.id, MessageDelivery.webhook_status == "failed")):
         d.webhook_status, d.webhook_attempts, d.webhook_next_at = "pending", 0, utcnow()
     db.commit()
@@ -713,11 +851,12 @@ def machine_webhook_retry(request: Request, machine_id: int, user: User = Depend
 
 @router.post("/machines/{machine_id}/delete")
 def machine_delete(request: Request, machine_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    m = _own_machine(db, user, machine_id)
+    m = _managed_machine(db, user, machine_id)
+    back = _owner_url(user, m.user, "/account")
     db.delete(m)
     db.commit()
     flash(request, "Machine deleted.", "success")
-    return redirect("/account")
+    return redirect(back)
 
 
 # ---- administration ---------------------------------------------------------
@@ -859,12 +998,16 @@ def admin_tenancy_policy(
     min_role_department_broadcast: str = Form(""),
     min_role_tenancy_broadcast: str = Form(""),
     allow_cross_tenancy_dm: bool = Form(False),
+    board_setting: bool = Form(False),
+    board_enabled: bool = Form(False),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     t = _tenancy_or_404(db, user, tenancy_id)
     if not can_manage_tenancy(user, t):
         raise forbid()
+    if board_setting:  # forms without the switch leave it unchanged
+        t.board_enabled = board_enabled
     t.description = description.strip()
     t.min_role_self_broadcast = _policy_value(min_role_self_broadcast)
     t.min_role_department_broadcast = _policy_value(min_role_department_broadcast)
@@ -907,6 +1050,8 @@ def admin_department_edit(
     department_id: int,
     name: str = Form(...),
     description: str = Form(""),
+    board_setting: bool = Form(False),
+    board_enabled: bool = Form(False),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -921,6 +1066,8 @@ def admin_department_edit(
         return redirect(f"/admin/tenancies/{d.tenancy_id}")
     old = d.name
     d.name, d.description = name, description.strip()
+    if board_setting:
+        d.board_enabled = board_enabled
     try:
         db.commit()
     except IntegrityError:
@@ -952,17 +1099,74 @@ def admin_department_delete(request: Request, department_id: int, user: User = D
     return redirect(f"/admin/tenancies/{d.tenancy_id}")
 
 
+@router.post("/admin/tenancies/{tenancy_id}/departments/batch-delete")
+def admin_departments_batch_delete(
+    request: Request,
+    tenancy_id: int,
+    ids: list[int] = Form([]),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    t = _tenancy_or_404(db, user, tenancy_id)
+    if not can_manage_tenancy(user, t):
+        raise forbid()
+    populated = set(db.scalars(select(User.department_id).where(User.department_id.in_(ids))))
+    deleted = skipped = 0
+    for d in db.scalars(select(Department).where(Department.id.in_(ids), Department.tenancy_id == t.id)):
+        if d.id in populated:
+            skipped += 1
+        else:
+            db.delete(d)
+            deleted += 1
+    db.commit()
+    if skipped:
+        flash(request, "{n} department(s) still have users and were kept. Move or remove their users first.",
+              "warn", n=skipped)
+    flash(request, "Deleted {n} item(s).", "success", n=deleted)
+    return redirect(f"/admin/tenancies/{t.id}")
+
+
 @router.get("/admin/users")
-def admin_users(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def admin_users(request: Request, kind: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)):
     _require_admin_view(user)
-    return render(request, "admin/users.html", user, users=_managed_users(db, user), can_manage_user=can_manage_user)
+    users = _managed_users(db, user)
+    counts = {"": len(users), "human": sum(not u.is_agent for u in users), "agent": sum(u.is_agent for u in users)}
+    if kind in ("human", "agent"):
+        users = [u for u in users if u.is_agent == (kind == "agent")]
+    else:
+        kind = ""
+    return render(request, "admin/users.html", user, users=users, kind=kind, kind_counts=counts,
+                  can_manage_user=can_manage_user)
+
+
+@router.post("/admin/users/batch-delete")
+def admin_users_batch_delete(
+    request: Request,
+    ids: list[int] = Form([]),
+    next: str = Form("/admin/users"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    _require_admin_view(user)
+    targets = [u.id for u in db.scalars(select(User).where(User.id.in_(ids))) if can_manage_user(user, u)]
+    if targets:
+        # Machines, keys and inboxes go with the account (ON DELETE CASCADE); posts and comments stay
+        # under their recorded author address.
+        db.execute(delete(User).where(User.id.in_(targets)))
+        db.commit()
+        db.expire_all()
+    _flash_batch(request, len(targets), len(ids))
+    return redirect(safe_next(next, "/admin/users"))
 
 
 @router.get("/admin/users/new")
-def admin_user_new(request: Request, placement: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)):
+def admin_user_new(
+    request: Request, placement: str = "", kind: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)
+):
     _require_admin_view(user)
     return render(request, "admin/user_form.html", user, target=None, roles=assignable_roles(user),
-                  placements=_placements(db, user), form={"placement": placement, "role": int(Role.USER)})
+                  placements=_placements(db, user),
+                  form={"placement": placement, "role": int(Role.USER), "is_agent": kind == "agent"})
 
 
 @router.post("/admin/users")
@@ -973,6 +1177,7 @@ def admin_user_create(
     password: str = Form(...),
     role: int = Form(...),
     placement: str = Form(""),
+    is_agent: bool = Form(False),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -988,6 +1193,7 @@ def admin_user_create(
         new = User(
             username=username, display_name=display_name.strip(), password_hash=hash_password(password), role=role,
             tenancy_id=tenancy.id if tenancy else None, department_id=department.id if department else None,
+            is_agent=is_agent,
         )
         db.add(new)
         try:
@@ -1000,7 +1206,8 @@ def admin_user_create(
     flash(request, error, "error", n=MIN_PASSWORD)
     return render(request, "admin/user_form.html", user, status_code=400, target=None, roles=assignable_roles(user),
                   placements=_placements(db, user),
-                  form={"username": username, "display_name": display_name, "role": role, "placement": placement})
+                  form={"username": username, "display_name": display_name, "role": role, "placement": placement,
+                        "is_agent": is_agent})
 
 
 def _managed_target(db: Session, actor: User, user_id: int) -> User:
@@ -1018,13 +1225,51 @@ def _placement_value(u: User) -> str:
     return ""
 
 
+def _user_page(request: Request, db: Session, user: User, target: User, new_mcp_key: str | None = None):
+    return render(request, "admin/user_form.html", user, target=target, roles=assignable_roles(user),
+                  placements=_placements(db, user), new_mcp_key=new_mcp_key,
+                  manage_agent=can_manage_agent(user, target),
+                  form={"username": target.username, "display_name": target.display_name, "role": target.role,
+                        "placement": _placement_value(target), "is_active": target.is_active,
+                        "is_agent": target.is_agent})
+
+
 @router.get("/admin/users/{user_id}")
 def admin_user(request: Request, user_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    target = _managed_target(db, user, user_id)
-    return render(request, "admin/user_form.html", user, target=target, roles=assignable_roles(user),
-                  placements=_placements(db, user),
-                  form={"username": target.username, "display_name": target.display_name, "role": target.role,
-                        "placement": _placement_value(target), "is_active": target.is_active})
+    return _user_page(request, db, user, _managed_target(db, user, user_id))
+
+
+def _managed_agent(db: Session, actor: User, user_id: int) -> User:
+    target = _managed_target(db, actor, user_id)
+    if not target.is_agent:
+        raise HTTPException(400, "Only agent accounts' machines and keys can be managed by administrators.")
+    return target
+
+
+@router.post("/admin/users/{user_id}/machines")
+def admin_agent_machine_create(
+    request: Request,
+    user_id: int,
+    name: str = Form(...),
+    description: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    target = _managed_agent(db, user, user_id)
+    return _register_machine(request, db, target, name, description, f"/admin/users/{target.id}")
+
+
+@router.post("/admin/users/{user_id}/mcp-keys")
+def admin_agent_mcp_key_create(
+    request: Request, user_id: int, label: str = Form(""), user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    target = _managed_agent(db, user, user_id)
+    raw, prefix, digest = generate_mcp_key()
+    db.add(McpKey(user_id=target.id, label=label.strip()[:128], prefix=prefix, key_hash=digest))
+    db.commit()
+    db.refresh(target)
+    # The plaintext key is rendered once and never stored.
+    return _user_page(request, db, user, target, new_mcp_key=raw)
 
 
 @router.post("/admin/users/{user_id}")
@@ -1035,6 +1280,7 @@ def admin_user_update(
     role: int = Form(...),
     placement: str = Form(""),
     is_active: bool = Form(False),
+    is_agent: bool = Form(False),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -1051,6 +1297,7 @@ def admin_user_update(
     target.tenancy_id = tenancy.id if tenancy else None
     target.department_id = department.id if department else None
     target.is_active = is_active
+    target.is_agent = is_agent
     try:
         db.commit()
         flash(request, "User updated.", "success")

@@ -22,6 +22,15 @@ def can_manage_user(actor: User, target: User) -> bool:
     return actor.role > target.role and in_scope(actor, target.tenancy_id, target.department_id)
 
 
+def can_manage_agent(actor: User, target: User) -> bool:
+    """Managers of an agent account also manage its machines, API keys and MCP keys."""
+    return target.is_agent and can_manage_user(actor, target)
+
+
+def can_manage_credentials(actor: User, owner: User) -> bool:
+    return actor.id == owner.id or can_manage_agent(actor, owner)
+
+
 def assignable_roles(actor: User) -> list[Role]:
     return [r for r in Role if r < actor.role and r != Role.SUPER_ADMIN]
 
@@ -71,8 +80,11 @@ def can_access_board(user: User, tenancy_id: int, department_id: int | None) -> 
     return user.department_id == department_id or user.role >= Role.TENANCY_MODERATOR
 
 
-def can_manage_projects(user: User, department: Department) -> bool:
-    """Create, edit and delete the project boards of a department."""
+def can_manage_projects(user: User, tenancy: Tenancy, department: Department | None) -> bool:
+    """Create, edit and delete created boards: a department's (Department Moderators and up) or
+    tenancy-wide ones (Tenancy Moderators and up)."""
+    if department is None:
+        return user.role >= Role.TENANCY_MODERATOR and in_scope(user, tenancy.id, None)
     return user.role >= Role.DEPARTMENT_MODERATOR and in_scope(user, department.tenancy_id, department.id)
 
 

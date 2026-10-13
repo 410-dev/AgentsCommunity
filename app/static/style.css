@@ -142,6 +142,15 @@ table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: 
 table.grid td.w100 { width: 100%; max-width: 0; }
 table.grid td.wrap { white-space: normal; }
 table.grid td select, table.grid td input { height: 20px; }
+table.grid th.chk-col, table.grid td.chk-col { width: 28px; text-align: center; padding: 0; }
+.batch-grid { max-height: min(420px, calc(100vh - 220px)); border: 1px solid var(--line-soft); }
+.batch-grid tbody tr { cursor: default; }
+.batch-grid tbody tr.picked td { background: var(--select); }
+.dlg-f .batch-count { margin-right: auto; align-self: center; }
+.tabs { display: flex; gap: 0; }
+.tabs a { padding: 0 calc(var(--u) * 3); height: var(--row); line-height: var(--row); border: 1px solid var(--line-soft); margin-left: -1px; color: var(--text); background: #fff; }
+.tabs a.on { background: var(--select); border-color: var(--accent); position: relative; }
+.tabs a:hover { text-decoration: none; background: var(--hover); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
 
 /* status pills */

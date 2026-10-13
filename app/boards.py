@@ -1,7 +1,9 @@
-"""Community boards: one tenancy-wide board per tenancy, one main board per department, and any
-number of project boards inside a department.
+"""Community boards: one built-in board per tenancy and per department, plus any number of created
+(project) boards, either inside a department or tenancy-wide.
 
-Board keys: '*:<tenancy>', '<dept>:<tenancy>' and '<dept>/<project>:<tenancy>'.
+Board keys: '*:<tenancy>', '<dept>:<tenancy>', '<dept>/<project>:<tenancy>' and '*/<project>:<tenancy>'.
+The built-in boards can be switched off per tenancy and per department so that only created boards are
+usable; their posts are kept and come back when the board is switched on again.
 Posts persist, so members who join later can read the full history of boards they can access.
 """
 
@@ -40,8 +42,13 @@ class Board:
     @property
     def title(self) -> str:
         if self.project is not None:
-            return f"{self.department.name} / {self.project.title or self.project.name} @ {self.tenancy.name}"
+            prefix = f"{self.department.name} / " if self.department else ""
+            return f"{prefix}{self.project.title or self.project.name} @ {self.tenancy.name}"
         return f"{self.department.name} @ {self.tenancy.name}" if self.department else f"{self.tenancy.name} (all)"
+
+    @property
+    def enabled(self) -> bool:
+        return is_enabled(self.tenancy, self.department, self.project)
 
     def where(self):
         """SQL conditions selecting this board's posts."""
@@ -60,6 +67,13 @@ class Board:
         }
 
 
+def is_enabled(tenancy: Tenancy, department: Department | None, project: Project | None) -> bool:
+    """Created boards are always usable; built-in boards follow their tenancy/department switch."""
+    if project is not None:
+        return True
+    return department.board_enabled if department is not None else tenancy.board_enabled
+
+
 def accessible_boards(db: Session, user: User) -> list[Board]:
     if user.role >= Role.ADMIN:
         tenancies = list(db.scalars(select(Tenancy).order_by(Tenancy.name)))
@@ -69,10 +83,13 @@ def accessible_boards(db: Session, user: User) -> list[Board]:
         tenancies = []
     boards: list[Board] = []
     for t in tenancies:
-        boards.append(Board(t, None))
+        if t.board_enabled:
+            boards.append(Board(t, None))
+        boards.extend(Board(t, None, p) for p in t.projects)
         for d in t.departments:
             if can_access_board(user, t.id, d.id):
-                boards.append(Board(t, d))
+                if d.board_enabled:
+                    boards.append(Board(t, d))
                 boards.extend(Board(t, d, p) for p in d.projects)
     return boards
 
@@ -97,14 +114,18 @@ def resolve_board(db: Session, user: User, key: str) -> Board | None:
             return None
     project = None
     if project_name:
-        if department is None:
-            return None  # project boards live inside departments
         project = db.scalar(
-            select(Project).where(Project.department_id == department.id, Project.name == project_name)
+            select(Project).where(
+                Project.tenancy_id == tenancy.id,
+                Project.department_id == department.id if department else Project.department_id.is_(None),
+                Project.name == project_name,
+            )
         )
         if project is None:
             return None
     if not can_access_board(user, tenancy.id, department.id if department else None):
+        return None
+    if not is_enabled(tenancy, department, project):
         return None
     return Board(tenancy, department, project)
 
@@ -166,7 +187,9 @@ def move_post(db: Session, post: Post, board: Board) -> None:
 
 
 def user_can_read_post(user: User, post: Post) -> bool:
-    return can_access_board(user, post.tenancy_id, post.department_id)
+    return can_access_board(user, post.tenancy_id, post.department_id) and is_enabled(
+        post.tenancy, post.department, post.project
+    )
 
 
 def post_dict(post: Post, comments: bool = False, comment_count: int | None = None) -> dict:

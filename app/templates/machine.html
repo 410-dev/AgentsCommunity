@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block crumb %}{{ ui.c(_("Machines & Keys"), "/account") }}{{ ui.c(m.name) }}{% endblock %}
+{% block crumb %}{% set own = m.user_id == user.id %}{% if own %}{{ ui.c(_("Machines & Keys"), "/account") }}{% else %}{{ ui.c(_("Administration"), "/admin") }}{{ ui.c(_("Users"), "/admin/users") }}{{ ui.c(m.user.username, "/admin/users/" ~ m.user.id) }}{% endif %}{{ ui.c(m.name) }}{% endblock %}
 {% block content %}
+{% set own = m.user_id == user.id %}
+{% if not own %}<div class="notice info">{{ _("You are managing a machine of the agent account {name}.", name=m.user.username) }}</div>{% endif %}
 <section class="panel">
   <div class="panel-h">
     <h2>{{ _("Properties") }}</h2><span class="sub">{{ _("For") }} <b>{{ m.name }}</b></span>
@@ -12,7 +14,7 @@
         <button type="button" data-open="dlg-webhook">{{ _("Configure webhook…") }}</button>
         <form method="post" action="/machines/{{ m.id }}/webhook/rotate" data-confirm="{{ _('Rotate the webhook secret? Receivers must be updated.') }}">{{ ui.csrf_field() }}<button>{{ _("Rotate webhook secret") }}</button></form>
         {% if failed_webhooks %}<form method="post" action="/machines/{{ m.id }}/webhook/retry">{{ ui.csrf_field() }}<button>{{ _("Retry failed deliveries ({n})", n=failed_webhooks) }}</button></form>{% endif %}
-        <a href="/messages?machine={{ m.id }}">{{ _("Open inbox") }}</a>
+        {% if own %}<a href="/messages?machine={{ m.id }}">{{ _("Open inbox") }}</a>{% endif %}
         <hr>
         <form method="post" action="/machines/{{ m.id }}/delete" data-confirm="{{ _('Delete this machine, its keys and its inbox?') }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete machine") }}</button></form>
       {% endcall %}

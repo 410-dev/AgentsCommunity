@@ -36,9 +36,33 @@
 {%- endmacro %}
 
 {% macro board_title(b) -%}
-{% if b.project %}{{ b.department.name }} / {{ b.project.title or b.project.name }} @ {{ b.tenancy.name }}{% elif b.department %}{{ b.department.name }} @ {{ b.tenancy.name }}{% else %}{{ b.tenancy.name }} {{ _("(all)") }}{% endif %}
+{% if b.project %}{% if b.department %}{{ b.department.name }} / {% endif %}{{ b.project.title or b.project.name }} @ {{ b.tenancy.name }}{% elif b.department %}{{ b.department.name }} @ {{ b.tenancy.name }}{% else %}{{ b.tenancy.name }} {{ _("(all)") }}{% endif %}
 {%- endmacro %}
 
 {% macro lang_switch() -%}
 {% for code, name in languages.items() if code != lang %}<a href="/lang/{{ code }}?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}" lang="{{ code }}">{{ name }}</a>{% endfor %}
+{%- endmacro %}
+
+{# Batch management: a modal grid with a checkbox per row; the caller renders the rows with ui.batch_check(id). #}
+{% macro batch(id, title, action, headers, next=None, note=None) -%}
+<dialog id="{{ id }}" class="wide">
+  <form method="post" action="{{ action }}" data-batch data-confirm="{{ _('Delete {n} selected item(s)? This cannot be undone.') }}">
+    <div class="dlg-h"><h3>{{ title }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
+    <div class="dlg-b">{{ csrf_field() }}{% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      {% if note %}<div class="hint">{{ note }}</div>{% endif %}
+      <div class="grid-wrap batch-grid">
+        <table class="grid">
+          <thead><tr><th class="chk-col"><input type="checkbox" data-batch-all aria-label="{{ _('Select all') }}"></th>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+          <tbody>{{ caller() }}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="dlg-f"><span class="hint batch-count">{{ _("Selected") }}: <b data-batch-count>0</b></span>
+      <button class="btn danger" data-batch-submit disabled>{{ _("Delete selected") }}</button><button type="button" class="btn" data-close>{{ _("Cancel") }}</button></div>
+  </form>
+</dialog>
+{%- endmacro %}
+
+{% macro batch_check(value) -%}
+<td class="chk-col"><input type="checkbox" name="ids" value="{{ value }}" aria-label="{{ _('Select') }}"></td>
 {%- endmacro %}

@@ -71,10 +71,41 @@
   });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeMenus(); });
 
-  // Confirm: <form data-confirm="...">
+  // Confirm: <form data-confirm="...">; in batch forms "{n}" becomes the number of selected rows.
   document.addEventListener("submit", function (e) {
     var msg = e.target.dataset.confirm;
+    if (msg && e.target.hasAttribute("data-batch")) msg = msg.replace("{n}", batchChecked(e.target).length);
     if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
+  // Batch management dialogs: <form data-batch> with input[name=ids] checkboxes and a select-all box.
+  function batchChecked(form) { return form.querySelectorAll("input[name=ids]:checked"); }
+  function batchSync(form) {
+    var boxes = form.querySelectorAll("input[name=ids]"), n = batchChecked(form).length;
+    boxes.forEach(function (b) { b.closest("tr").classList.toggle("picked", b.checked); });
+    var all = form.querySelector("[data-batch-all]");
+    if (all) { all.checked = n > 0 && n === boxes.length; all.indeterminate = n > 0 && n < boxes.length; }
+    var count = form.querySelector("[data-batch-count]");
+    if (count) count.textContent = n;
+    var submit = form.querySelector("[data-batch-submit]");
+    if (submit) submit.disabled = n === 0;
+  }
+  document.querySelectorAll("form[data-batch]").forEach(function (form) {
+    form.addEventListener("change", function (e) {
+      if (e.target.matches("[data-batch-all]")) {
+        form.querySelectorAll("input[name=ids]").forEach(function (b) { if (!b.closest("tr").hidden) b.checked = e.target.checked; });
+      }
+      batchSync(form);
+    });
+    // Clicking anywhere on a row toggles its checkbox.
+    form.addEventListener("click", function (e) {
+      var tr = e.target.closest("tbody tr");
+      if (!tr || e.target.closest("a, button, input, label")) return;
+      var box = tr.querySelector("input[name=ids]");
+      if (box) { box.checked = !box.checked; batchSync(form); }
+    });
+    form.closest("dialog").addEventListener("close", function () { form.reset(); batchSync(form); });
+    batchSync(form);
   });
 
   // Copy buttons: <button data-copy="elementId">
