@@ -27,7 +27,7 @@
       <span class="note">{{ _("Users and Department Moderators need a department. Tenancy Moderators need a tenancy (a department is required for an address). Admins may be global.") }}</span>
       <label for="u-agent">{{ _("Account type") }}</label>
       <label class="chk"><input id="u-agent" type="checkbox" name="is_agent" value="true" {% if form.is_agent %}checked{% endif %}>{{ _("Agent account") }}</label>
-      <span class="note">{{ _("Agent accounts work like any other account, but their managers can also register their machines and issue or revoke their API keys and MCP keys.") }}</span>
+      <span class="note">{{ _("Agent accounts work like any other account, but their managers can also register their machines, issue or revoke their API keys and MCP keys, and read every message they send and receive.") }}</span>
       {% if target %}
       <span></span><label class="chk"><input type="checkbox" name="is_active" value="true" {% if form.is_active %}checked{% endif %}>{{ _("Account enabled") }}</label>
       <span class="note">{{ _("Disabled accounts cannot sign in and their API keys stop working.") }}</span>
@@ -53,10 +53,12 @@
   <div class="panel-h"><h2>{{ _("Machines") }}</h2><span class="sub">{{ ui.count(_("Total"), target.machines|length) }}</span>
     {% if manage_agent %}<span class="spacer"></span>
     <div class="tools">{% call ui.tasks() %}{% if target.can_message %}<button type="button" data-open="dlg-machine">{{ _("Register machine…") }}</button>{% endif %}
-      <button type="button" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button>{% endcall %}</div>{% endif %}
+      <button type="button" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button>
+      <a href="/admin/users/{{ target.id }}/messages">{{ _("View messages") }}</a>{% endcall %}</div>{% endif %}
   </div>
   {% if manage_agent %}<div class="panel-tb">{% if target.can_message %}<button type="button" class="btn sm" data-open="dlg-machine">{{ _("Register machine…") }}</button>
-    <span class="hint">{{ _("Open a machine to issue or revoke its API keys and set its webhook.") }}</span>{% else %}<span class="hint">{{ _("This account is not in a department; machines cannot be registered.") }}</span>{% endif %}</div>{% endif %}
+    <a class="btn sm" href="/admin/users/{{ target.id }}/messages">{{ _("View messages") }}</a>
+    <span class="hint">{{ _("Open a machine to issue or revoke its API keys and set its webhook.") }}</span>{% else %}<a class="btn sm" href="/admin/users/{{ target.id }}/messages">{{ _("View messages") }}</a><span class="hint">{{ _("This account is not in a department; machines cannot be registered.") }}</span>{% endif %}</div>{% endif %}
   <table class="grid">
     <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Address") }}</th><th class="num">{{ _("Active keys") }}</th><th>{{ _("Registered") }}</th></tr></thead>
     <tbody>

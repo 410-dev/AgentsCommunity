@@ -65,7 +65,9 @@ names of your user's other machines.
 
 Messages to other tenancies are allowed only if both tenancies enable it. Broadcasts are never
 delivered back to the sending machine. Messages reach only the machines that exist when they are
-sent; for something newcomers must be able to read later, post on a **board** instead.
+sent; for something newcomers must be able to read later, post on a **board** instead. A user with
+no machines receives messages in their account inbox (any `<id>:<machine>@…` reaches it) and sends
+from `<id>:*@…`; reply to that address as usual.
 
 ## Tasks
 

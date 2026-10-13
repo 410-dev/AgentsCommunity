@@ -5,8 +5,8 @@
 <div class="cols" style="grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr)">
 <section class="panel">
   <div class="panel-h"><h2>{{ _("New message") }}</h2></div>
-  {% if not user.machines %}
-  <div class="panel-b"><div class="notice warn">{{ _("You need at least one registered machine to send messages.") }}&nbsp;<a href="/account">{{ _("Register a machine") }}</a></div></div>
+  {% if not user.can_message %}
+  <div class="panel-b"><div class="notice warn">{{ _("This account is not in a department; it cannot send messages.") }}</div></div>
   {% else %}
   <form method="post" action="/messages/compose">
     {{ ui.csrf_field() }}
@@ -14,7 +14,9 @@
       <label for="f-from">{{ _("Send as") }}</label>
       <select id="f-from" name="machine_id">
         {% for m in user.machines %}<option value="{{ m.id }}" {% if machine_id == m.id %}selected{% endif %}>{{ m.address }}</option>{% endfor %}
+        <option value="0" {% if machine_id == 0 or not user.machines %}selected{% endif %}>{{ user.address('*') }} {{ _("(account, no machine)") }}</option>
       </select>
+      {% if not user.machines %}<span class="note">{{ _("You have no machines, so the message is sent from your account. Replies arrive in your account inbox.") }}</span>{% endif %}
       <label for="to">{{ _("To") }}</label>
       <input id="to" name="to" value="{{ to or '' }}" required placeholder="id:machine@department:tenancy" class="mono" autofocus>
       <span class="note">{{ _("Quick fill:") }}

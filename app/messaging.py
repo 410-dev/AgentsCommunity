@@ -1,6 +1,8 @@
 """Address parsing, permission checks and fan-out for messages.
 
 Address format: <id>:<machine>@<department>:<tenancy>
+Messages go to machines. A recipient account without machines gets the message in its account inbox
+instead, and an account may also send as itself (without a machine).
 Allowed patterns ('*' is the broadcast wildcard):
     john:laptop@dev:example.com   direct   -> one machine
     john:*@dev:example.com        user     -> all of john's machines ("self" if john is the sender)
@@ -93,15 +95,27 @@ def _check_policy(sender: User, min_role: int | None, scope: str) -> None:
         raise MessagingError(403, _POLICY_ROLE[scope], role=role_label(min_role))
 
 
-def _active_machines(db: Session, *conditions) -> list[Machine]:
-    stmt = select(Machine).join(User).where(User.is_active.is_(True), *conditions)
-    return list(db.scalars(stmt))
+Recipient = tuple[User, Machine | None]  # machine None = the account inbox
+
+
+def _inboxes(user: User) -> list[Recipient]:
+    """A user's machines, or the account itself when it has none."""
+    return [(user, m) for m in user.machines] or [(user, None)]
+
+
+def _active_inboxes(db: Session, *conditions) -> list[Recipient]:
+    users = db.scalars(select(User).where(User.is_active.is_(True), User.department_id.is_not(None), *conditions))
+    return [r for u in users for r in _inboxes(u)]
+
+
+def _split_sender(sender: Machine | User) -> tuple[User, Machine | None]:
+    return (sender.user, sender) if isinstance(sender, Machine) else (sender, None)
 
 
 def resolve_recipients(
-    db: Session, sender_machine: Machine, addr: Address
-) -> tuple[str, list[Machine]]:
-    sender = sender_machine.user
+    db: Session, sender_from: Machine | User, addr: Address
+) -> tuple[str, list[Recipient]]:
+    sender, sender_machine = _split_sender(sender_from)
     if not sender.is_active or not sender.can_message:
         raise MessagingError(403, "Sender account cannot send messages.")
     kind = classify(addr)
@@ -125,7 +139,7 @@ def resolve_recipients(
         if not same_tenancy and sender.role < Role.ADMIN:
             raise MessagingError(403, "You may only broadcast to your own tenancy.")
         _check_policy(sender, tenancy.min_role_tenancy_broadcast, "Tenancy")
-        machines = _active_machines(db, User.tenancy_id == tenancy.id)
+        recipients = _active_inboxes(db, User.tenancy_id == tenancy.id)
 
     elif kind == "department":
         if not same_tenancy and sender.role < Role.ADMIN:
@@ -133,7 +147,7 @@ def resolve_recipients(
         if department.id != sender.department_id and sender.role < Role.TENANCY_MODERATOR:
             raise MessagingError(403, "You may only broadcast to your own department.")
         _check_policy(sender, tenancy.min_role_department_broadcast, "Department")
-        machines = _active_machines(db, User.department_id == department.id)
+        recipients = _active_inboxes(db, User.department_id == department.id)
 
     else:  # user / direct
         target_user = db.scalar(
@@ -153,27 +167,34 @@ def resolve_recipients(
             if target_user.id == sender.id:
                 kind = "self"
                 _check_policy(sender, tenancy.min_role_self_broadcast, "Own-device")
-            machines = list(target_user.machines)
+            recipients = _inboxes(target_user)
         else:
+            if not target_user.machines:  # no machines: the account inbox takes it
+                return kind, [(target_user, None)]
             machine = next((m for m in target_user.machines if m.name == addr.machine), None)
             if machine is None:
                 raise MessagingError(404, "Unknown machine: {name}", name=str(addr))
-            return kind, [machine]
+            return kind, [(target_user, machine)]
 
-    # Broadcasts never echo back to the sending machine.
-    return kind, [m for m in machines if m.id != sender_machine.id]
+    # Broadcasts never echo back to the sending inbox (the machine, or the account sending as itself).
+    return kind, [(u, m) for u, m in recipients
+                  if not (m is not None and sender_machine is not None and m.id == sender_machine.id)
+                  and not (m is None and sender_machine is None and u.id == sender.id)]
 
 
 def send_message(
-    db: Session, sender_machine: Machine, target: str, body: str, subject: str = ""
+    db: Session, sender_from: Machine | User, target: str, body: str, subject: str = ""
 ) -> Message:
+    """Send as a machine, or as an account (`User`) without a machine."""
     if not body.strip():
         raise MessagingError(400, "Message body is empty.")
     addr = parse_address(target)
-    kind, recipients = resolve_recipients(db, sender_machine, addr)
+    kind, recipients = resolve_recipients(db, sender_from, addr)
+    sender, sender_machine = _split_sender(sender_from)
     msg = Message(
-        sender_machine_id=sender_machine.id,
-        sender_address=sender_machine.address,
+        sender_machine_id=sender_machine.id if sender_machine else None,
+        sender_user_id=sender.id,
+        sender_address=sender_machine.address if sender_machine else sender.address("*"),
         target=str(addr),
         kind=kind,
         subject=subject[:255],
@@ -181,12 +202,14 @@ def send_message(
     )
     db.add(msg)
     now = utcnow()
-    for m in recipients:
+    for u, m in recipients:
+        hook = m is not None and m.webhook_url
         msg.deliveries.append(
             MessageDelivery(
-                machine_id=m.id,
-                webhook_status="pending" if m.webhook_url else "none",
-                webhook_next_at=now if m.webhook_url else None,
+                user_id=u.id,
+                machine_id=m.id if m else None,
+                webhook_status="pending" if hook else "none",
+                webhook_next_at=now if hook else None,
             )
         )
     db.commit()

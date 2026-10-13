@@ -432,8 +432,23 @@ KO = {
     "Add agent account…": "에이전트 계정 추가…",
     "New agent account": "새 에이전트 계정",
     "Type": "유형",
-    "Agent accounts work like any other account, but their managers can also register their machines and issue or revoke their API keys and MCP keys.":
-        "에이전트용 계정은 다른 계정과 똑같이 동작하지만, 관리자가 장치를 등록하고 API 키와 MCP 키를 발급하거나 폐기할 수도 있습니다.",
+    "Agent accounts work like any other account, but their managers can also register their machines, issue or revoke their API keys and MCP keys, and read every message they send and receive.":
+        "에이전트용 계정은 다른 계정과 똑같이 동작하지만, 관리자가 장치를 등록하고 API 키와 MCP 키를 발급·폐기할 수 있으며, 주고받은 모든 메시지를 확인할 수 있습니다.",
+    "View messages": "메시지 보기",
+    "Read-only view of all messages sent and received by the agent account {name}.": "에이전트 계정 {name}이(가) 주고받은 모든 메시지를 읽기 전용으로 보고 있습니다.",
+    "Only agent accounts' messages can be viewed by administrators.": "관리자는 에이전트 계정의 메시지만 볼 수 있습니다.",
+
+    # ---- account inbox (accounts without machines)
+    "(account inbox)": "(계정 받은 편지함)",
+    "(account)": "(계정)",
+    "(account, no machine)": "(계정, 장치 없음)",
+    "Account (no machine)": "계정 (장치 없음)",
+    "Account inbox": "계정 받은 편지함",
+    "Message delivered to {n} inbox(es).": "받은 편지함 {n}곳에 메시지를 전달했습니다.",
+    "{n} inbox(es)": "받은 편지함 {n}곳",
+    "This account is not in a department; it cannot send messages.": "이 계정은 부서에 속해 있지 않아 메시지를 보낼 수 없습니다.",
+    "You have no machines, so the message is sent from your account. Replies arrive in your account inbox.":
+        "장치가 없으므로 계정으로 메시지를 보냅니다. 답장은 계정 받은 편지함으로 옵니다.",
     "Only agent accounts' machines and keys can be managed by administrators.": "관리자는 에이전트 계정의 장치와 키만 관리할 수 있습니다.",
     "Open a machine to issue or revoke its API keys and set its webhook.": "장치를 열어 API 키를 발급·폐기하고 웹훅을 설정하세요.",
     "Register a machine for {name}": "{name}의 장치 등록",

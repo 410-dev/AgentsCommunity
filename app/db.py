@@ -69,12 +69,19 @@ def _migrate(bind) -> None:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} BOOLEAN NOT NULL DEFAULT {default}"))
     if "tenancy_id" not in columns("projects"):
         _migrate_tenancy_projects(bind)
+    if "sender_user_id" not in columns("messages"):
+        with bind.begin() as conn:
+            conn.execute(text("ALTER TABLE messages ADD COLUMN sender_user_id INTEGER "
+                              "REFERENCES users(id) ON DELETE SET NULL"))
+            conn.execute(text("UPDATE messages SET sender_user_id = "
+                              "(SELECT user_id FROM machines WHERE machines.id = messages.sender_machine_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_messages_sender_user_id ON messages (sender_user_id)"))
+    if "user_id" not in columns("message_deliveries"):
+        _migrate_account_deliveries(bind)
 
 
 def _migrate_tenancy_projects(bind) -> None:
     """Projects gained tenancy_id and an optional department_id (tenancy-wide created boards)."""
-    from .models import Project
-
     if bind.dialect.name != "sqlite":
         with bind.begin() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN tenancy_id INTEGER REFERENCES tenancies(id) ON DELETE CASCADE"))
@@ -83,29 +90,53 @@ def _migrate_tenancy_projects(bind) -> None:
             conn.execute(text("ALTER TABLE projects ALTER COLUMN tenancy_id SET NOT NULL"))
             conn.execute(text("ALTER TABLE projects ALTER COLUMN department_id DROP NOT NULL"))
     else:
-        # SQLite cannot change a column's nullability, so rebuild the table. Build the new one first and
-        # rename it last: renaming the old table would repoint posts.project_id at it.
-        with bind.connect() as conn:
-            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
-            conn.commit()
-            try:
-                with conn.begin():
-                    conn.execute(text(
-                        "CREATE TABLE projects_new (id INTEGER NOT NULL PRIMARY KEY, "
-                        "tenancy_id INTEGER NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE, "
-                        "department_id INTEGER REFERENCES departments(id) ON DELETE CASCADE, "
-                        "name VARCHAR(64) NOT NULL, title VARCHAR(255) NOT NULL, description TEXT NOT NULL, "
-                        "created_at DATETIME NOT NULL, UNIQUE (department_id, name))"
-                    ))
-                    conn.execute(text(
-                        "INSERT INTO projects_new (id, tenancy_id, department_id, name, title, description, created_at) "
+        _sqlite_rebuild(bind, "projects", "id, tenancy_id, department_id, name, title, description, created_at",
                         "SELECT p.id, d.tenancy_id, p.department_id, p.name, p.title, p.description, p.created_at "
-                        "FROM projects p JOIN departments d ON d.id = p.department_id"
-                    ))
-                    conn.execute(text("DROP TABLE projects"))
-                    conn.execute(text("ALTER TABLE projects_new RENAME TO projects"))
-            finally:
-                conn.exec_driver_sql("PRAGMA foreign_keys=ON")
-                conn.commit()
-    for index in Project.__table__.indexes:
+                        "FROM projects p JOIN departments d ON d.id = p.department_id")
+    _create_indexes(bind, "projects")
+
+
+def _migrate_account_deliveries(bind) -> None:
+    """Deliveries gained user_id (the recipient account) and an optional machine_id (account inbox)."""
+    if bind.dialect.name != "sqlite":
+        with bind.begin() as conn:
+            conn.execute(text("ALTER TABLE message_deliveries ADD COLUMN user_id INTEGER "
+                              "REFERENCES users(id) ON DELETE CASCADE"))
+            conn.execute(text("UPDATE message_deliveries SET user_id = "
+                              "(SELECT user_id FROM machines WHERE machines.id = message_deliveries.machine_id)"))
+            conn.execute(text("ALTER TABLE message_deliveries ALTER COLUMN user_id SET NOT NULL"))
+            conn.execute(text("ALTER TABLE message_deliveries ALTER COLUMN machine_id DROP NOT NULL"))
+    else:
+        cols = "id, message_id, machine_id, read_at, webhook_status, webhook_attempts, webhook_next_at, webhook_last_error"
+        _sqlite_rebuild(bind, "message_deliveries", f"{cols}, user_id",
+                        f"SELECT {', '.join('d.' + c.strip() for c in cols.split(','))}, m.user_id "
+                        "FROM message_deliveries d JOIN machines m ON m.id = d.machine_id")
+    _create_indexes(bind, "message_deliveries")
+
+
+def _create_indexes(bind, table: str) -> None:
+    for index in Base.metadata.tables[table].indexes:
         index.create(bind, checkfirst=True)
+
+
+def _sqlite_rebuild(bind, table: str, columns: str, select_sql: str) -> None:
+    """SQLite cannot change a column's nullability, so rebuild the table from the current model. The new
+    table is built first and renamed last: renaming the old one would repoint foreign keys at it."""
+    from sqlalchemy.schema import CreateTable
+
+    ddl = str(CreateTable(Base.metadata.tables[table]).compile(dialect=bind.dialect))
+    prefix = f"CREATE TABLE {table} ("
+    assert ddl.strip().startswith(prefix), ddl
+    ddl = ddl.strip().replace(prefix, f"CREATE TABLE {table}_new (", 1)
+    with bind.connect() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        conn.commit()
+        try:
+            with conn.begin():
+                conn.execute(text(ddl))
+                conn.execute(text(f"INSERT INTO {table}_new ({columns}) {select_sql}"))
+                conn.execute(text(f"DROP TABLE {table}"))
+                conn.execute(text(f"ALTER TABLE {table}_new RENAME TO {table}"))
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()

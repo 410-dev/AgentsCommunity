@@ -58,10 +58,7 @@ def render(request: Request, name: str, user: User | None = None, status_code: i
     db = object_session(user) if user is not None else None
     if db is not None:
         unread_total = db.scalar(
-            select(func.count())
-            .select_from(MessageDelivery)
-            .join(Machine)
-            .where(Machine.user_id == user.id, MessageDelivery.read_at.is_(None))
+            select(func.count()).where(MessageDelivery.user_id == user.id, MessageDelivery.read_at.is_(None))
         )
     lang = detect_language(request)
     _ = translator(lang)
@@ -203,11 +200,11 @@ def set_language(code: str, next: str = "/"):
 # ---- dashboard --------------------------------------------------------------
 
 
-def _unread_by_machine(db: Session, user: User) -> dict[int, int]:
+def _unread_by_machine(db: Session, user: User) -> dict[int | None, int]:
+    """Unread count per machine id; the key None is the account inbox."""
     rows = db.execute(
         select(MessageDelivery.machine_id, func.count())
-        .join(Machine)
-        .where(Machine.user_id == user.id, MessageDelivery.read_at.is_(None))
+        .where(MessageDelivery.user_id == user.id, MessageDelivery.read_at.is_(None))
         .group_by(MessageDelivery.machine_id)
     )
     return dict(rows.all())
@@ -229,7 +226,7 @@ def dashboard(request: Request, user: User = Depends(current_user), db: Session 
         "keys": db.scalar(
             select(func.count()).where(ApiKey.machine_id.in_(machine_ids), ApiKey.revoked_at.is_(None))
         ) if machine_ids else 0,
-        "sent": db.scalar(select(func.count()).where(Message.sender_machine_id.in_(machine_ids))) if machine_ids else 0,
+        "sent": db.scalar(select(func.count()).where(Message.sender_user_id == user.id)),
     }
     failed = dict(
         db.execute(
@@ -275,6 +272,49 @@ def _owner_url(user: User, owner: User, own: str) -> str:
     return own if owner.id == user.id else f"/admin/users/{owner.id}"
 
 
+ACCOUNT_INBOX = 0  # `machine` filter value for messages sent to / as the account itself
+
+
+def _mailbox(
+    request: Request, db: Session, user: User, owner: User, base: str, box: str, machine: int | None,
+    unread: bool, open: int | None,
+):
+    """Inbox or sent box of `owner`: all machines, one machine, or the account inbox (machine=0)."""
+    selected = None
+    if machine and machine != ACCOUNT_INBOX:
+        selected = db.get(Machine, machine)
+        if selected is None or selected.user_id != owner.id:
+            raise HTTPException(404, "Machine not found")
+    if box == "sent":
+        stmt = select(Message).where(Message.sender_user_id == owner.id)
+        if selected:
+            stmt = stmt.where(Message.sender_machine_id == selected.id)
+        elif machine == ACCOUNT_INBOX:
+            stmt = stmt.where(Message.sender_machine_id.is_(None))
+        rows = db.scalars(stmt.order_by(Message.id.desc()).limit(200)).all()
+        opened = db.get(Message, open) if open is not None else None
+        if opened is not None and opened.sender_user_id != owner.id:
+            opened = None
+    else:
+        box = "inbox"
+        stmt = select(MessageDelivery).join(Message).where(MessageDelivery.user_id == owner.id)
+        if selected:
+            stmt = stmt.where(MessageDelivery.machine_id == selected.id)
+        elif machine == ACCOUNT_INBOX:
+            stmt = stmt.where(MessageDelivery.machine_id.is_(None))
+        if unread:
+            stmt = stmt.where(MessageDelivery.read_at.is_(None))
+        rows = db.scalars(stmt.order_by(Message.id.desc()).limit(200)).all()
+        opened = db.get(MessageDelivery, open) if open is not None else None
+        if opened is not None and opened.user_id != owner.id:
+            opened = None
+    return render(
+        request, "messages.html", user, owner=owner, base=base, readonly=owner.id != user.id,
+        box=box, rows=rows, selected=selected, account_only=machine == ACCOUNT_INBOX, unread=unread,
+        unread_counts=_unread_by_machine(db, owner), opened=opened,
+    )
+
+
 @router.get("/messages")
 def messages(
     request: Request,
@@ -285,42 +325,25 @@ def messages(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    selected = _own_machine(db, user, machine)
-    opened = None
-    if open is not None:
-        if box == "sent":
-            opened = db.get(Message, open)
-            if opened is None or opened.sender_machine_id not in [m.id for m in user.machines]:
-                opened = None
-        else:
-            opened = db.get(MessageDelivery, open)
-            if opened is None or opened.machine.user_id != user.id:
-                opened = None
-    machine_ids = [selected.id] if selected else [m.id for m in user.machines]
-    if box == "sent":
-        rows = db.scalars(
-            select(Message).where(Message.sender_machine_id.in_(machine_ids)).order_by(Message.id.desc()).limit(200)
-        ).all()
-    else:
-        stmt = (
-            select(MessageDelivery)
-            .join(Message)
-            .where(MessageDelivery.machine_id.in_(machine_ids))
-        )
-        if unread:
-            stmt = stmt.where(MessageDelivery.read_at.is_(None))
-        rows = db.scalars(stmt.order_by(Message.id.desc()).limit(200)).all()
-    return render(
-        request,
-        "messages.html",
-        user,
-        box=box,
-        rows=rows,
-        selected=selected,
-        unread=unread,
-        unread_counts=_unread_by_machine(db, user),
-        opened=opened,
-    )
+    return _mailbox(request, db, user, user, "/messages", box, machine, unread, open)
+
+
+@router.get("/admin/users/{user_id}/messages")
+def admin_agent_messages(
+    request: Request,
+    user_id: int,
+    box: str = "inbox",
+    machine: int | None = None,
+    unread: bool = False,
+    open: int | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Managers of an agent account can read everything it sent and received (read-only)."""
+    target = _managed_target(db, user, user_id)
+    if not can_manage_agent(user, target):
+        raise HTTPException(400, "Only agent accounts' messages can be viewed by administrators.")
+    return _mailbox(request, db, user, target, f"/admin/users/{target.id}/messages", box, machine, unread, open)
 
 
 @router.get("/messages/compose")
@@ -331,21 +354,22 @@ def compose_form(request: Request, to: str = "", user: User = Depends(current_us
 @router.post("/messages/compose")
 def compose(
     request: Request,
-    machine_id: int = Form(...),
+    machine_id: int = Form(ACCOUNT_INBOX),
     to: str = Form(...),
     subject: str = Form(""),
     body: str = Form(...),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    machine = _own_machine(db, user, machine_id)
+    # Without a machine, the message is sent as the account itself.
+    sender = _own_machine(db, user, machine_id) if machine_id != ACCOUNT_INBOX else user
     try:
-        msg = send_message(db, machine, to, body, subject)
+        msg = send_message(db, sender, to, body, subject)
     except MessagingError as exc:
         flash(request, exc.template, "error", **exc.params)
         return render(request, "compose.html", user, status_code=exc.status, to=to, subject=subject, body=body,
                       machine_id=machine_id)
-    flash(request, "Message sent to {n} machine(s).", "success", n=len(msg.deliveries))
+    flash(request, "Message delivered to {n} inbox(es).", "success", n=len(msg.deliveries))
     return redirect("/messages?box=sent")
 
 
@@ -357,7 +381,7 @@ def message_detail(delivery_id: int, user: User = Depends(current_user)):
 @router.post("/messages/{delivery_id}/read")
 def message_mark_read(request: Request, delivery_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     d = db.get(MessageDelivery, delivery_id)
-    if d is None or d.machine.user_id != user.id:
+    if d is None or d.user_id != user.id:
         raise HTTPException(404, "Message not found")
     d.read_at = None if d.read_at else utcnow()
     db.commit()

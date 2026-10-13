@@ -249,6 +249,10 @@ class Message(Base):
     sender_machine_id: Mapped[int | None] = mapped_column(
         ForeignKey("machines.id", ondelete="SET NULL"), nullable=True
     )
+    # The sending account; sender_machine_id is NULL when the message was sent as the account itself.
+    sender_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     sender_address: Mapped[str] = mapped_column(String(512))  # snapshot at send time
     target: Mapped[str] = mapped_column(String(512))
     kind: Mapped[str] = mapped_column(String(16))  # direct | user | self | department | tenancy
@@ -257,21 +261,35 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     deliveries: Mapped[list["MessageDelivery"]] = relationship(back_populates="message")
+    sender_user: Mapped["User | None"] = relationship()
 
 
 class MessageDelivery(Base):
-    """One row per recipient machine: holds per-device read and webhook state."""
+    """One row per recipient: a machine, or the account itself (machine_id NULL) when the recipient has
+    no machines. Holds per-inbox read and webhook state."""
 
     __tablename__ = "message_deliveries"
     __table_args__ = (
         UniqueConstraint("message_id", "machine_id"),
         Index("ix_deliveries_machine_read", "machine_id", "read_at"),
+        Index("ix_deliveries_user_read", "user_id", "read_at"),
         Index("ix_deliveries_webhook", "webhook_status", "webhook_next_at"),
+        Index(
+            "uq_deliveries_account",
+            "message_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("machine_id IS NULL"),
+            sqlite_where=text("machine_id IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"))
-    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    machine_id: Mapped[int | None] = mapped_column(
+        ForeignKey("machines.id", ondelete="CASCADE"), nullable=True
+    )
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # none | pending | delivered | failed
     webhook_status: Mapped[str] = mapped_column(String(16), default="none")
@@ -280,7 +298,15 @@ class MessageDelivery(Base):
     webhook_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     message: Mapped[Message] = relationship(back_populates="deliveries")
-    machine: Mapped[Machine] = relationship()
+    user: Mapped[User] = relationship()
+    machine: Mapped[Machine | None] = relationship()
+
+    @property
+    def inbox_address(self) -> str:
+        """Address of the inbox this copy landed in."""
+        if self.machine is not None:
+            return self.machine.address
+        return self.user.address("*") or self.user.username
 
 
 class Post(Base):

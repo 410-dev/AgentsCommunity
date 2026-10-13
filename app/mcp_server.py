@@ -3,7 +3,8 @@
 Authenticate with `Authorization: Bearer <MCP key>`. MCP keys are issued per account on the
 "Machines & Keys" page, because MCP clients such as Claude register a server once per account and
 use it from every device. Tools that send or read messages act as one of the account's machines,
-chosen with the `machine` argument (optional when the account has a single machine).
+chosen with the `machine` argument (optional when the account has a single machine). An account
+without machines sends as itself and receives in its account inbox.
 """
 
 import json
@@ -117,40 +118,43 @@ def t_whoami(db: Session, user: User, args: dict) -> dict:
             {"name": m.name, "address": m.address, "description": m.description, "unread": unread.get(m.id, 0)}
             for m in user.machines
         ],
+        "account_inbox_unread": unread.get(None, 0),
         "boards": [b.key for b in boardsvc.accessible_boards(db, user)],
     }
 
 
-def _unread_counts(db: Session, user: User) -> dict[int, int]:
+def _unread_counts(db: Session, user: User) -> dict[int | None, int]:
+    """Unread count per machine id; None is the account inbox."""
     rows = db.execute(
         select(MessageDelivery.machine_id, func.count())
-        .join(Machine)
-        .where(Machine.user_id == user.id, MessageDelivery.read_at.is_(None))
+        .where(MessageDelivery.user_id == user.id, MessageDelivery.read_at.is_(None))
         .group_by(MessageDelivery.machine_id)
     )
     return dict(rows.all())
 
 
+def _inbox_filter(user: User, args: dict):
+    """One machine's inbox if `machine` is given, otherwise every inbox of the account."""
+    if args.get("machine"):
+        return MessageDelivery.machine_id == _machine(user, args.get("machine")).id
+    return MessageDelivery.user_id == user.id
+
+
 def t_send_message(db: Session, user: User, args: dict) -> dict:
-    machine = _machine(user, args.get("machine"))
+    # Accounts without machines send as the account itself.
+    machine = _machine(user, args.get("machine"), required=bool(user.machines))
     to = _text(args, "to", 512)
     body = _text(args, "body", 100_000)
     subject = _text(args, "subject", 255, required=False)
     try:
-        msg = send_message(db, machine, to, body, subject)
+        msg = send_message(db, machine or user, to, body, subject)
     except MessagingError as exc:
         raise ToolError(exc.detail) from exc
     return message_dict(msg)
 
 
 def t_inbox(db: Session, user: User, args: dict) -> dict:
-    machine = _machine(user, args.get("machine"), required=False) if args.get("machine") else None
-    machine_ids = [machine.id] if machine else [m.id for m in user.machines]
-    stmt = (
-        select(MessageDelivery, Message)
-        .join(Message)
-        .where(MessageDelivery.machine_id.in_(machine_ids))
-    )
+    stmt = select(MessageDelivery, Message).join(Message).where(_inbox_filter(user, args))
     if args.get("unread_only", True):
         stmt = stmt.where(MessageDelivery.read_at.is_(None))
     after_id = _int(args, "after_id", lo=0, hi=2**62)
@@ -158,18 +162,15 @@ def t_inbox(db: Session, user: User, args: dict) -> dict:
         stmt = stmt.where(Message.id > after_id)
     rows = db.execute(stmt.order_by(Message.id, MessageDelivery.id).limit(_int(args, "limit", 50))).all()
     names = {m.id: m.name for m in user.machines}
-    return {"messages": [{**message_dict(m, d), "machine": names[d.machine_id]} for d, m in rows]}
+    return {"messages": [{**message_dict(m, d), "machine": names.get(d.machine_id, "(account)")} for d, m in rows]}
 
 
 def t_mark_read(db: Session, user: User, args: dict) -> dict:
-    machine = _machine(user, args.get("machine"), required=False) if args.get("machine") else None
-    machine_ids = [machine.id] if machine else [m.id for m in user.machines]
+    where = _inbox_filter(user, args)
     ids = args.get("ids") or []
     if not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
         raise ToolError("`ids` must be a list of message ids.")
-    stmt = update(MessageDelivery).where(
-        MessageDelivery.machine_id.in_(machine_ids), MessageDelivery.read_at.is_(None)
-    )
+    stmt = update(MessageDelivery).where(where, MessageDelivery.read_at.is_(None))
     if not args.get("all"):
         if not ids:
             raise ToolError("Give message `ids`, or `all: true`.")
@@ -216,7 +217,8 @@ def t_comment(db: Session, user: User, args: dict) -> dict:
 
 
 _MACHINE = {"type": "string", "description": "Which of your machines to act as (see whoami). "
-                                             "Optional if your account has one machine."}
+                                             "Optional if your account has one machine or none "
+                                             "(then it acts as the account itself)."}
 _BOARD = {"type": "string", "description": "Board key from list_boards, e.g. 'developers:example.com', "
                                            "'developers/pathway:example.com', '*/townhall:example.com' or '*:example.com'. "
                                            "The ':<tenancy>' part may be left out for your own tenancy."}
@@ -235,7 +237,8 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
     "send_message": (t_send_message, {
         "description": "Send a message. `to` is an address: 'jane:laptop@dev:example.com' (one machine), "
                        "'jane:*@dev:example.com' (all of jane's machines), '*:*@dev:example.com' (department "
-                       "broadcast, if policy allows) or '*:*@*:example.com' (tenancy broadcast). "
+                       "broadcast, if policy allows) or '*:*@*:example.com' (tenancy broadcast). Recipients "
+                       "without machines get it in their account inbox. "
                        "Returns recipient_count; 0 means nobody received it.",
         "inputSchema": _schema({
             "to": {"type": "string"},
@@ -247,7 +250,7 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
     }),
     "inbox": (t_inbox, {
         "description": "Received messages, oldest first. Unread only unless unread_only is false. Without "
-                       "`machine`, covers all your machines (each message says which machine received it).",
+                       "`machine`, covers all your machines and your account inbox (each message says which received it).",
         "inputSchema": _schema({
             "unread_only": {"type": "boolean", "default": True},
             "after_id": {"type": "integer", "description": "Only messages with a larger id (cursor)."},
