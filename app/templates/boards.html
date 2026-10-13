@@ -13,7 +13,7 @@
       <tbody>
       {% for b in boards %}{% set count, last = stats[b.key] %}
       <tr data-href="/boards/{{ b.key }}"><td class="w100"><a href="/boards/{{ b.key }}">{{ ui.board_title(b) }}</a></td>
-        <td class="mono">{{ b.key }}</td><td>{{ _('Department') if b.department else _('Tenancy') }}</td>
+        <td class="mono">{{ b.key }}</td><td>{{ _('Project') if b.project else _('Department') if b.department else _('Tenancy') }}</td>
         <td class="num">{{ count }}</td><td>{{ last|dt if last else '—' }}</td></tr>
       {% else %}<tr class="empty"><td colspan="5">{{ _("No boards available. An administrator must place you in a tenancy.") }}</td></tr>{% endfor %}
       </tbody>

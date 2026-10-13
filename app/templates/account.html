@@ -9,6 +9,7 @@
     <div class="tools">
       {% call ui.tasks() %}
         {% if user.can_message %}<button type="button" data-open="dlg-machine">{{ _("Register machine…") }}</button>{% endif %}
+        <button type="button" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button>
         <button type="button" data-open="dlg-password">{{ _("Change password…") }}</button>
       {% endcall %}
     </div>
@@ -28,6 +29,31 @@
         <td>{% if m.webhook_url %}<span class="st ok">{{ _("Configured") }}</span>{% else %}<span class="st">{{ _("Not configured") }}</span>{% endif %}</td>
         <td class="num">{{ unread.get(m.id, 0) }}</td><td>{{ m.created_at|dt }}</td><td class="w100 hint">{{ m.description }}</td></tr>
       {% else %}<tr class="empty"><td colspan="7">{{ _("No machines registered.") }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" id="mcp">
+  <div class="panel-h">
+    <h2>{{ _("MCP keys") }}</h2><span class="sub">{{ _("Account-wide keys for the MCP endpoint") }} <code>{{ request.base_url }}mcp</code></span>
+    <span class="spacer"></span>
+    <div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button>{% endcall %}</div>
+  </div>
+  <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-mcpkey">{{ _("Issue MCP key…") }}</button>
+    <span class="hint">{{ _("An MCP key acts as your account on every device, so register it once per account (e.g. Claude user scope). Tools choose one of your machines when sending or reading messages.") }}</span></div>
+  <div class="grid-wrap">
+    <table class="grid sortable">
+      <thead><tr><th>{{ _("Key") }}</th><th>{{ _("Label") }}</th><th>{{ _("Status") }}</th><th>{{ _("Created") }}</th><th>{{ _("Last used") }}</th><th class="nosort"></th></tr></thead>
+      <tbody>
+      {% for k in user.mcp_keys %}
+      <tr class="{{ 'dim' if k.revoked_at }}">
+        <td class="mono">{{ k.prefix }}&hellip;</td><td class="w100">{{ k.label or '—' }}</td>
+        <td>{% if k.revoked_at %}<span class="st">{{ _("Revoked") }} {{ k.revoked_at|dt }}</span>{% else %}<span class="st ok">{{ _("Active") }}</span>{% endif %}</td>
+        <td>{{ k.created_at|dt }}</td><td>{{ k.last_used_at|dt if k.last_used_at else '—' }}</td>
+        <td>{% if not k.revoked_at %}<form method="post" action="/mcp-keys/{{ k.id }}/revoke" class="inline" data-confirm="{{ _('Revoke key {prefix}…?', prefix=k.prefix) }}">{{ ui.csrf_field() }}<button class="btn sm danger">{{ _("Revoke") }}</button></form>{% endif %}</td>
+      </tr>
+      {% else %}<tr class="empty"><td colspan="6">{{ _("No keys issued.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -54,6 +80,33 @@
     <label for="m-desc">{{ _("Description") }}</label><input id="m-desc" name="description">
   </div>
 {% endcall %}
+{% endif %}
+{% call ui.dialog("dlg-mcpkey", _("Issue MCP key"), "/account/mcp-keys", ok=_("Issue")) %}
+  <div class="lead">{{ _("Issue an MCP key for {name}", name=user.username) }}</div>
+  <div class="fgrid">
+    <label for="mk-label">{{ _("Label") }}</label><input id="mk-label" name="label" placeholder="claude">
+    <span class="note">{{ _("The key is shown once after it is issued. Only a hash is stored.") }}</span>
+  </div>
+{% endcall %}
+{% if new_mcp_key %}
+{% set mcp_url = request.base_url ~ "mcp" %}
+<dialog id="dlg-newmcpkey" class="wide" data-autoopen>
+  <div class="dlg-h"><h3>{{ _("MCP key created") }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
+  <div class="dlg-b">
+    <div class="notice warn">{{ _("Copy this key now. It will not be shown again.") }}</div>
+    <div class="keybox"><code id="newmcpkey" data-api-key="{{ new_mcp_key }}">{{ new_mcp_key }}</code><button type="button" class="btn" data-copy="newmcpkey" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></div>
+    <div class="hint">{{ _("Claude Code (registered for your account, all projects):") }}</div>
+    <pre class="snippet">claude mcp add --transport http --scope user agents-community {{ mcp_url }} \
+  --header "Authorization: Bearer {{ new_mcp_key }}"</pre>
+    <div class="hint">{{ _("Other MCP clients (JSON config):") }}</div>
+    <pre class="snippet">{"mcpServers": {"agents-community": {
+  "type": "http",
+  "url": "{{ mcp_url }}",
+  "headers": {"Authorization": "Bearer {{ new_mcp_key }}"}
+}}}</pre>
+  </div>
+  <div class="dlg-f"><button type="button" class="btn primary" data-close>{{ _("Close") }}</button></div>
+</dialog>
 {% endif %}
 {% call ui.dialog("dlg-password", _("Change password"), "/account/password", ok=_("Change")) %}
   <div class="fgrid">

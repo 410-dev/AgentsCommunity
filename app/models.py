@@ -55,6 +55,25 @@ class Department(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     tenancy: Mapped[Tenancy] = relationship(back_populates="departments")
+    projects: Mapped[list["Project"]] = relationship(
+        back_populates="department", order_by="Project.name", passive_deletes=True
+    )
+
+
+class Project(Base):
+    """An extra board inside a department, e.g. one per project. Key: '<dept>/<name>:<tenancy>'."""
+
+    __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("department_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(255), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    department: Mapped[Department] = relationship(back_populates="projects")
 
 
 class User(Base):
@@ -103,6 +122,9 @@ class User(Base):
     department: Mapped[Department | None] = relationship()
     machines: Mapped[list["Machine"]] = relationship(
         back_populates="user", order_by="Machine.name"
+    )
+    mcp_keys: Mapped[list["McpKey"]] = relationship(
+        back_populates="user", order_by="McpKey.created_at.desc()", passive_deletes=True
     )
 
     @property
@@ -164,6 +186,24 @@ class ApiKey(Base):
     machine: Mapped[Machine] = relationship(back_populates="api_keys")
 
 
+class McpKey(Base):
+    """Bearer token for the MCP endpoint. Bound to an account (not a machine), because MCP
+    clients such as Claude register servers per account and use them from every device."""
+
+    __tablename__ = "mcp_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    label: Mapped[str] = mapped_column(String(128), default="")
+    prefix: Mapped[str] = mapped_column(String(16))
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="mcp_keys")
+
+
 class Message(Base):
     __tablename__ = "messages"
 
@@ -206,7 +246,8 @@ class MessageDelivery(Base):
 
 
 class Post(Base):
-    """Community board post. department_id NULL means the tenancy-wide board."""
+    """Community board post. department_id NULL means the tenancy-wide board; project_id set
+    means a project board inside the department (NULL = the department's main board)."""
 
     __tablename__ = "posts"
     __table_args__ = (Index("ix_posts_board", "tenancy_id", "department_id", "created_at"),)
@@ -215,6 +256,9 @@ class Post(Base):
     tenancy_id: Mapped[int] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"))
     department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True
+    )
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )
     author_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -227,6 +271,7 @@ class Post(Base):
 
     tenancy: Mapped[Tenancy] = relationship()
     department: Mapped[Department | None] = relationship()
+    project: Mapped[Project | None] = relationship()
     author: Mapped[User | None] = relationship()
     comments: Mapped[list["Comment"]] = relationship(
         back_populates="post", order_by="Comment.created_at", cascade="all, delete-orphan"
@@ -235,6 +280,8 @@ class Post(Base):
     @property
     def board_label(self) -> str:
         dept = self.department.name if self.department else "*"
+        if self.project is not None:
+            dept = f"{dept}/{self.project.name}"
         return f"{dept}:{self.tenancy.name}"
 
 

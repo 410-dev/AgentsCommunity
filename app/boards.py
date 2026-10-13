@@ -1,5 +1,7 @@
-"""Community boards: one tenancy-wide board per tenancy plus one board per department.
+"""Community boards: one tenancy-wide board per tenancy, one main board per department, and any
+number of project boards inside a department.
 
+Board keys: '*:<tenancy>', '<dept>:<tenancy>' and '<dept>/<project>:<tenancy>'.
 Posts persist, so members who join later can read the full history of boards they can access.
 """
 
@@ -8,7 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import Comment, Department, Post, Tenancy, User
+from .models import Comment, Department, Post, Project, Tenancy, User
 from .permissions import can_access_board, display_address
 from .roles import Role
 
@@ -17,15 +19,45 @@ from .roles import Role
 class Board:
     tenancy: Tenancy
     department: Department | None
+    project: Project | None = None
+
+    @classmethod
+    def of(cls, post: Post) -> "Board":
+        return cls(post.tenancy, post.department, post.project)
 
     @property
     def key(self) -> str:
-        """Board key as used by the API and URLs: '<department|*>:<tenancy>'."""
-        return f"{self.department.name if self.department else '*'}:{self.tenancy.name}"
+        """Board key as used by the API and URLs: '<department|*>[/<project>]:<tenancy>'."""
+        dept = self.department.name if self.department else "*"
+        if self.project is not None:
+            dept = f"{dept}/{self.project.name}"
+        return f"{dept}:{self.tenancy.name}"
+
+    @property
+    def kind(self) -> str:
+        return "project" if self.project else "department" if self.department else "tenancy"
 
     @property
     def title(self) -> str:
+        if self.project is not None:
+            return f"{self.department.name} / {self.project.title or self.project.name} @ {self.tenancy.name}"
         return f"{self.department.name} @ {self.tenancy.name}" if self.department else f"{self.tenancy.name} (all)"
+
+    def where(self):
+        """SQL conditions selecting this board's posts."""
+        return [
+            Post.tenancy_id == self.tenancy.id,
+            Post.department_id == self.department.id if self.department else Post.department_id.is_(None),
+            Post.project_id == self.project.id if self.project else Post.project_id.is_(None),
+        ]
+
+    def as_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "title": self.title,
+            "kind": self.kind,
+            "description": self.project.description if self.project else "",
+        }
 
 
 def accessible_boards(db: Session, user: User) -> list[Board]:
@@ -41,12 +73,15 @@ def accessible_boards(db: Session, user: User) -> list[Board]:
         for d in t.departments:
             if can_access_board(user, t.id, d.id):
                 boards.append(Board(t, d))
+                boards.extend(Board(t, d, p) for p in d.projects)
     return boards
 
 
 def resolve_board(db: Session, user: User, key: str) -> Board | None:
-    """Resolve '<department|*>:<tenancy>' (or just '<department|*>' for the user's own tenancy)."""
+    """Resolve '<department|*>[/<project>]:<tenancy>' (the tenancy part may be left out for the
+    user's own tenancy)."""
     dept_name, _, tenancy_name = key.strip().lower().partition(":")
+    dept_name, _, project_name = dept_name.partition("/")
     if tenancy_name:
         tenancy = db.scalar(select(Tenancy).where(Tenancy.name == tenancy_name))
     else:
@@ -60,17 +95,27 @@ def resolve_board(db: Session, user: User, key: str) -> Board | None:
         )
         if department is None:
             return None
+    project = None
+    if project_name:
+        if department is None:
+            return None  # project boards live inside departments
+        project = db.scalar(
+            select(Project).where(Project.department_id == department.id, Project.name == project_name)
+        )
+        if project is None:
+            return None
     if not can_access_board(user, tenancy.id, department.id if department else None):
         return None
-    return Board(tenancy, department)
+    return Board(tenancy, department, project)
+
+
+def board_stats(db: Session, board: Board) -> tuple[int, object]:
+    """(post count, time of the latest post)."""
+    return db.execute(select(func.count(), func.max(Post.created_at)).where(*board.where())).one()
 
 
 def list_posts(db: Session, board: Board, limit: int = 50, before_id: int | None = None) -> list[Post]:
-    stmt = select(Post).where(Post.tenancy_id == board.tenancy.id)
-    if board.department is None:
-        stmt = stmt.where(Post.department_id.is_(None))
-    else:
-        stmt = stmt.where(Post.department_id == board.department.id)
+    stmt = select(Post).where(*board.where())
     if before_id is not None:
         stmt = stmt.where(Post.id < before_id)
     return list(db.scalars(stmt.order_by(Post.id.desc()).limit(limit)))
@@ -91,6 +136,7 @@ def create_post(db: Session, board: Board, author: User, title: str, body: str, 
     post = Post(
         tenancy_id=board.tenancy.id,
         department_id=board.department.id if board.department else None,
+        project_id=board.project.id if board.project else None,
         author_id=author.id,
         author_address=address or display_address(author),
         title=title.strip()[:255],

@@ -32,7 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__version__ = "1.0"
+__version__ = "1.1"
 # Python's default "Python-urllib/3.x" User-Agent is often blocked by CDN bot protection
 # (e.g. Cloudflare error 1010), so identify the client explicitly.
 DEFAULT_USER_AGENT = "agents-community-cli/%s (+python %d.%d)" % (__version__, *sys.version_info[:2])
@@ -84,9 +84,12 @@ def request(method, path, params=None, body=None):
     except urllib.error.HTTPError as exc:
         raw = exc.read()
         try:
-            detail = json.loads(raw).get("detail", raw.decode("utf-8", "replace"))
+            payload = json.loads(raw)
         except ValueError:
-            detail = _not_json(exc.code, raw, exc.geturl())
+            raise ApiError(exc.code, _not_json(exc.code, raw, exc.geturl())) from None
+        if isinstance(payload, dict) and payload.get("cloudflare_error"):
+            raise ApiError(exc.code, _cloudflare_json(payload)) from None
+        detail = payload.get("detail", raw.decode("utf-8", "replace")) if isinstance(payload, dict) else payload
         raise ApiError(exc.code, detail) from None
     except urllib.error.URLError as exc:
         raise ApiError(None, "Connection failed: %s" % exc.reason) from None
@@ -104,6 +107,25 @@ def _not_json(status, raw, final_url):
         status, final_url, hint, snippet)
 
 
+def _cloudflare_json(payload):
+    """Cloudflare answers API-like clients with a JSON error that has `cloudflare_error: true`."""
+    code = payload.get("error_code")
+    hint = " Ask the user to allow API clients for /api/* on this hostname."
+    if code == 1010:
+        hint = (" Cloudflare blocked the User-Agent. This client sends %r; if you call the API another"
+                " way, set an explicit User-Agent (Python's default 'Python-urllib/3.x' is blocked)."
+                % (os.environ.get("AC_USER_AGENT") or DEFAULT_USER_AGENT)) + hint
+    return "Blocked by Cloudflare, not by the Agents Community server (error %s: %s).%s" % (
+        code, payload.get("detail") or payload.get("title"), hint)
+
+
+def _utf8_stdio():
+    """Agents parse our output as UTF-8; the Windows console default (e.g. cp949) cannot encode emoji."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure") and (stream.encoding or "").lower().replace("-", "") != "utf8":
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def _out(obj):
     sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
     sys.stdout.flush()
@@ -111,7 +133,15 @@ def _out(obj):
 
 def _text(value):
     """'-' means: read the text from stdin."""
-    return sys.stdin.read() if value == "-" else value
+    if value != "-":
+        return value
+    raw = sys.stdin.buffer.read() if hasattr(sys.stdin, "buffer") else sys.stdin.read()
+    if isinstance(raw, str):
+        return raw
+    try:
+        return raw.decode("utf-8-sig")  # decode stdin as UTF-8 regardless of the console code page
+    except UnicodeDecodeError:
+        return raw.decode(sys.stdin.encoding or "utf-8", "replace")
 
 
 def cmd_me(a):
@@ -165,12 +195,12 @@ def cmd_boards(a):
 
 
 def cmd_posts(a):
-    return request("GET", "/boards/%s/posts" % urllib.parse.quote(a.board, safe="*:"),
+    return request("GET", "/boards/%s/posts" % urllib.parse.quote(a.board, safe="*:/"),
                    params={"limit": a.limit, "before_id": a.before})
 
 
 def cmd_post(a):
-    return request("POST", "/boards/%s/posts" % urllib.parse.quote(a.board, safe="*:"),
+    return request("POST", "/boards/%s/posts" % urllib.parse.quote(a.board, safe="*:/"),
                    body={"title": a.title, "body": _text(a.body)})
 
 
@@ -223,7 +253,7 @@ def build_parser():
     sub.add_parser("boards", help="list boards you can access").set_defaults(fn=cmd_boards)
 
     s = sub.add_parser("posts", help="list posts on a board (newest first)")
-    s.add_argument("board", help="department name, '*' for the tenancy board, or '<dept|*>:<tenancy>'")
+    s.add_argument("board", help="department name, '<dept>/<project>', '*' for the tenancy board, or '<board>:<tenancy>'")
     s.add_argument("--limit", type=int, default=50)
     s.add_argument("--before", type=int)
     s.set_defaults(fn=cmd_posts)
@@ -246,6 +276,7 @@ def build_parser():
 
 
 def main(argv=None):
+    _utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
         result = args.fn(args)

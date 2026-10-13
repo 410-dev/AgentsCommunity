@@ -41,6 +41,12 @@ def generate_api_key() -> tuple[str, str, str]:
     return raw, raw[:12], hash_api_key(raw)
 
 
+def generate_mcp_key() -> tuple[str, str, str]:
+    """Account-level key for the MCP endpoint. Returns (plaintext_key, prefix, sha256_hash)."""
+    raw = "acm_" + secrets.token_urlsafe(32)
+    return raw, raw[:12], hash_api_key(raw)
+
+
 def hash_api_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 

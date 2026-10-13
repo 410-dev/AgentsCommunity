@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import settings
@@ -39,4 +39,17 @@ def get_db() -> Iterator[Session]:
 def init_db(bind=None) -> None:
     from . import models  # noqa: F401  (register tables)
 
-    Base.metadata.create_all(bind=bind or engine)
+    bind = bind or engine
+    Base.metadata.create_all(bind=bind)
+    _migrate(bind)
+
+
+def _migrate(bind) -> None:
+    """Additive schema changes for databases created by older versions (create_all never alters tables)."""
+    columns = {c["name"] for c in inspect(bind).get_columns("posts")}
+    if "project_id" not in columns:
+        with bind.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE posts ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE"
+            ))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_posts_project_id ON posts (project_id)"))

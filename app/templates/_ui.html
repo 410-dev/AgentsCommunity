@@ -36,7 +36,7 @@
 {%- endmacro %}
 
 {% macro board_title(b) -%}
-{% if b.department %}{{ b.department.name }} @ {{ b.tenancy.name }}{% else %}{{ b.tenancy.name }} {{ _("(all)") }}{% endif %}
+{% if b.project %}{{ b.department.name }} / {{ b.project.title or b.project.name }} @ {{ b.tenancy.name }}{% elif b.department %}{{ b.department.name }} @ {{ b.tenancy.name }}{% else %}{{ b.tenancy.name }} {{ _("(all)") }}{% endif %}
 {%- endmacro %}
 
 {% macro lang_switch() -%}

@@ -71,6 +71,11 @@ def can_access_board(user: User, tenancy_id: int, department_id: int | None) -> 
     return user.department_id == department_id or user.role >= Role.TENANCY_MODERATOR
 
 
+def can_manage_projects(user: User, department: Department) -> bool:
+    """Create, edit and delete the project boards of a department."""
+    return user.role >= Role.DEPARTMENT_MODERATOR and in_scope(user, department.tenancy_id, department.id)
+
+
 def can_moderate_post(user: User, post: Post) -> bool:
     if post.author_id == user.id:
         return True

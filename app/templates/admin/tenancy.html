@@ -56,14 +56,15 @@
   </div>
   <div class="grid-wrap">
     <table class="grid sortable">
-      <thead><tr><th>{{ _("Name") }}</th><th class="num">{{ _("Users") }}</th><th>{{ _("Description") }}</th><th class="nosort"></th></tr></thead>
+      <thead><tr><th>{{ _("Name") }}</th><th class="num">{{ _("Users") }}</th><th class="num">{{ _("Project boards") }}</th><th>{{ _("Description") }}</th><th class="nosort"></th></tr></thead>
       <tbody>
       {% for d in t.departments %}
       <tr><td class="mono"><a href="/boards/{{ d.name }}:{{ t.name }}" title="{{ _('Open board') }}">{{ d.name }}</a></td>
-        <td class="num">{{ counts.get(d.id, 0) }}</td><td class="w100 hint">{{ d.description }}</td>
+        <td class="num">{{ counts.get(d.id, 0) }}</td><td class="num">{{ d.projects|length }}</td><td class="w100 hint">{{ d.description }}</td>
         <td><a class="btn sm" href="/admin/users/new?placement=d:{{ d.id }}">{{ _("Add user") }}</a>
-          {% if can_manage %}<form method="post" action="/admin/departments/{{ d.id }}/delete" class="inline" data-confirm="{{ _('Delete department {name} and its board?', name=d.name) }}">{{ ui.csrf_field() }}<button class="btn sm danger">{{ _("Delete") }}</button></form>{% endif %}</td></tr>
-      {% else %}<tr class="empty"><td colspan="4">{{ _("No departments.") }}</td></tr>{% endfor %}
+          {% if can_manage %}<button type="button" class="btn sm" data-open="dlg-dept-{{ d.id }}">{{ _("Edit…") }}</button>
+          <form method="post" action="/admin/departments/{{ d.id }}/delete" class="inline" data-confirm="{{ _('Delete department {name} and its board?', name=d.name) }}">{{ ui.csrf_field() }}<button class="btn sm danger">{{ _("Delete") }}</button></form>{% endif %}</td></tr>
+      {% else %}<tr class="empty"><td colspan="5">{{ _("No departments.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -97,6 +98,15 @@
     <span class="note">{{ _("Cross-tenancy messages also require the other tenancy to allow them.") }}</span>
   </div>
 {% endcall %}
+{% for d in t.departments %}
+{% call ui.dialog("dlg-dept-" ~ d.id, _("Edit department") ~ " — " ~ d.name, "/admin/departments/" ~ d.id ~ "/edit", ok=_("Save")) %}
+  <div class="fgrid">
+    <label for="de-name-{{ d.id }}">{{ _("Name") }}</label><input id="de-name-{{ d.id }}" name="name" required value="{{ d.name }}" class="mono">
+    <span class="note">{{ _("Renaming changes the addresses of all members and the board keys:") }} <code>id:machine@&lt;name&gt;:{{ t.name }}</code>. {{ _("API keys and MCP keys keep working; old messages keep the old address.") }}</span>
+    <label for="de-desc-{{ d.id }}">{{ _("Description") }}</label><input id="de-desc-{{ d.id }}" name="description" value="{{ d.description }}">
+  </div>
+{% endcall %}
+{% endfor %}
 {% call ui.dialog("dlg-dept", _("Add department"), "/admin/tenancies/" ~ t.id ~ "/departments", ok=_("Add")) %}
   <div class="fgrid">
     <label for="d-name">{{ _("Name") }}</label><input id="d-name" name="name" required placeholder="developers" class="mono">

@@ -12,11 +12,15 @@ from ..db import get_db
 from ..i18n import COOKIE as LANG_COOKIE, LANGUAGES, detect_language, translator
 from ..deps import csrf_protect, csrf_token, current_user, optional_user, super_admin_exists
 from ..messaging import MessagingError, send_message
-from ..models import ApiKey, Comment, Department, Machine, Message, MessageDelivery, Post, Tenancy, User, utcnow
+from ..models import (
+    ApiKey, Comment, Department, Machine, McpKey, Message, MessageDelivery, Post, Project, Tenancy, User, utcnow,
+)
 from ..permissions import (
     assignable_roles,
     can_create_tenancy,
+    can_manage_projects,
     can_manage_tenancy,
+    can_access_board,
     can_manage_user,
     can_moderate_post,
     can_view_admin,
@@ -26,6 +30,7 @@ from ..permissions import (
 from ..roles import POLICY_ROLES, Role, role_label
 from ..security import (
     generate_api_key,
+    generate_mcp_key,
     generate_webhook_secret,
     hash_password,
     valid_name,
@@ -344,14 +349,7 @@ def message_mark_read(request: Request, delivery_id: int, user: User = Depends(c
 @router.get("/boards")
 def boards_index(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     boards = boardsvc.accessible_boards(db, user)
-    stats = {}
-    for b in boards:
-        stmt = select(func.count(), func.max(Post.created_at)).where(Post.tenancy_id == b.tenancy.id)
-        if b.department:
-            stmt = stmt.where(Post.department_id == b.department.id)
-        else:
-            stmt = stmt.where(Post.department_id.is_(None))
-        stats[b.key] = db.execute(stmt).one()
+    stats = {b.key: boardsvc.board_stats(db, b) for b in boards}
     return render(request, "boards.html", user, boards=boards, stats=stats)
 
 
@@ -362,7 +360,7 @@ def _board_or_404(db: Session, user: User, key: str) -> boardsvc.Board:
     return board
 
 
-@router.get("/boards/{key}")
+@router.get("/boards/{key:path}")
 def board_view(
     request: Request,
     key: str,
@@ -374,19 +372,24 @@ def board_view(
     board = _board_or_404(db, user, key)
     posts = boardsvc.list_posts(db, board, limit=100, before_id=before)
     opened = db.get(Post, open) if open is not None else None
-    if opened is not None and boardsvc.Board(opened.tenancy, opened.department).key != board.key:
+    if opened is not None and boardsvc.Board.of(opened).key != board.key:
         opened = None
+    projects = []
+    if board.department is not None and board.project is None:
+        projects = [(p, *boardsvc.board_stats(db, boardsvc.Board(board.tenancy, board.department, p)))
+                    for p in board.department.projects]
     return render(
         request, "board.html", user, board=board, posts=posts, counts=boardsvc.comment_counts(db, posts),
-        opened=opened, can_moderate=bool(opened and can_moderate_post(user, opened)),
+        opened=opened, can_moderate=bool(opened and can_moderate_post(user, opened)), projects=projects,
+        can_manage_projects=bool(board.department and can_manage_projects(user, board.department)),
     )
 
 
 def _post_url(post: Post) -> str:
-    return f"/boards/{boardsvc.Board(post.tenancy, post.department).key}?open={post.id}"
+    return f"/boards/{boardsvc.Board.of(post).key}?open={post.id}"
 
 
-@router.post("/boards/{key}/posts")
+@router.post("/boards/{key:path}/posts")
 def board_post(
     request: Request,
     key: str,
@@ -430,7 +433,7 @@ def post_delete(request: Request, post_id: int, user: User = Depends(current_use
     post = _post_or_404(db, user, post_id)
     if not can_moderate_post(user, post):
         raise forbid()
-    key = boardsvc.Board(post.tenancy, post.department).key
+    key = boardsvc.Board.of(post).key
     db.delete(post)
     db.commit()
     flash(request, "Post deleted.", "success")
@@ -450,12 +453,122 @@ def comment_delete(request: Request, comment_id: int, user: User = Depends(curre
     return redirect(url)
 
 
+# ---- project boards (inside a department) -----------------------------------
+
+
+def _project_form(request: Request, name: str, title: str, description: str) -> tuple[str, str, str] | None:
+    name = name.strip().lower()
+    if not valid_name(name):
+        flash(request, "Board name must be lowercase letters, digits, '.', '_' or '-'.", "error")
+        return None
+    return name, title.strip()[:255], description.strip()
+
+
+@router.post("/departments/{department_id}/projects")
+def project_create(
+    request: Request,
+    department_id: int,
+    name: str = Form(...),
+    title: str = Form(""),
+    description: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    d = db.get(Department, department_id)
+    if d is None or not can_access_board(user, d.tenancy_id, d.id):
+        raise HTTPException(404, "Department not found")
+    if not can_manage_projects(user, d):
+        raise forbid()
+    main_board = boardsvc.Board(d.tenancy, d).key
+    form = _project_form(request, name, title, description)
+    if form is None:
+        return redirect(f"/boards/{main_board}")
+    p = Project(department_id=d.id, name=form[0], title=form[1], description=form[2])
+    db.add(p)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        flash(request, "That board already exists in this department.", "error")
+        return redirect(f"/boards/{main_board}")
+    key = boardsvc.Board(d.tenancy, d, p).key
+    flash(request, "Project board {name} created.", "success", name=key)
+    return redirect(f"/boards/{key}")
+
+
+def _managed_project(db: Session, user: User, project_id: int) -> Project:
+    p = db.get(Project, project_id)
+    if p is None or not can_access_board(user, p.department.tenancy_id, p.department_id):
+        raise HTTPException(404, "Board not found")
+    if not can_manage_projects(user, p.department):
+        raise forbid()
+    return p
+
+
+@router.post("/projects/{project_id}/edit")
+def project_edit(
+    request: Request,
+    project_id: int,
+    name: str = Form(...),
+    title: str = Form(""),
+    description: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    p = _managed_project(db, user, project_id)
+    old_key = boardsvc.Board(p.department.tenancy, p.department, p).key
+    form = _project_form(request, name, title, description)
+    if form is None:
+        return redirect(f"/boards/{old_key}")
+    p.name, p.title, p.description = form
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        flash(request, "That board already exists in this department.", "error")
+        return redirect(f"/boards/{old_key}")
+    flash(request, "Board saved.", "success")
+    return redirect(f"/boards/{boardsvc.Board(p.department.tenancy, p.department, p).key}")
+
+
+@router.post("/projects/{project_id}/delete")
+def project_delete(request: Request, project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = _managed_project(db, user, project_id)
+    main_board = boardsvc.Board(p.department.tenancy, p.department).key
+    db.delete(p)
+    db.commit()
+    flash(request, "Project board deleted (including its posts).", "success")
+    return redirect(f"/boards/{main_board}")
+
+
 # ---- account, machines & API keys -------------------------------------------
 
 
 @router.get("/account")
 def account(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    return render(request, "account.html", user, unread=_unread_by_machine(db, user))
+    return render(request, "account.html", user, unread=_unread_by_machine(db, user), new_mcp_key=None)
+
+
+@router.post("/account/mcp-keys")
+def mcp_key_create(request: Request, label: str = Form(""), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    raw, prefix, digest = generate_mcp_key()
+    db.add(McpKey(user_id=user.id, label=label.strip()[:128], prefix=prefix, key_hash=digest))
+    db.commit()
+    db.refresh(user)
+    # The plaintext key is rendered once and never stored.
+    return render(request, "account.html", user, unread=_unread_by_machine(db, user), new_mcp_key=raw)
+
+
+@router.post("/mcp-keys/{key_id}/revoke")
+def mcp_key_revoke(request: Request, key_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    k = db.get(McpKey, key_id)
+    if k is None or k.user_id != user.id:
+        raise HTTPException(404, "Key not found")
+    if k.revoked_at is None:
+        k.revoked_at = utcnow()
+        db.commit()
+    flash(request, "Key {prefix}… revoked.", "success", prefix=k.prefix)
+    return redirect("/account#mcp")
 
 
 @router.post("/account/password")
@@ -766,6 +879,41 @@ def admin_department_create(
         db.rollback()
         flash(request, "That department already exists.", "error")
     return redirect(f"/admin/tenancies/{t.id}")
+
+
+@router.post("/admin/departments/{department_id}/edit")
+def admin_department_edit(
+    request: Request,
+    department_id: int,
+    name: str = Form(...),
+    description: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    d = db.get(Department, department_id)
+    if d is None:
+        raise HTTPException(404, "Department not found")
+    if not can_manage_tenancy(user, d.tenancy):
+        raise forbid()
+    name = name.strip().lower()
+    if not valid_name(name):
+        flash(request, "Department name must be lowercase letters, digits, '.', '_' or '-'.", "error")
+        return redirect(f"/admin/tenancies/{d.tenancy_id}")
+    old = d.name
+    d.name, d.description = name, description.strip()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        flash(request, "That department already exists.", "error")
+        return redirect(f"/admin/tenancies/{d.tenancy_id}")
+    if old != name:
+        # Addresses and board keys are derived from the name, so they change at once; API keys keep working.
+        flash(request, "Department renamed from {old} to {new}. Member addresses changed accordingly.", "success",
+              old=old, new=name)
+    else:
+        flash(request, "Department saved.", "success")
+    return redirect(f"/admin/tenancies/{d.tenancy_id}")
 
 
 @router.post("/admin/departments/{department_id}/delete")

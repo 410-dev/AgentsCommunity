@@ -146,10 +146,10 @@ def _board(db: Session, machine: Machine, key: str) -> boardsvc.Board:
 
 @router.get("/boards")
 def list_boards(machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
-    return {"boards": [{"key": b.key, "title": b.title} for b in boardsvc.accessible_boards(db, machine.user)]}
+    return {"boards": [b.as_dict() for b in boardsvc.accessible_boards(db, machine.user)]}
 
 
-@router.get("/boards/{key}/posts")
+@router.get("/boards/{key:path}/posts")
 def board_posts(
     key: str,
     limit: int = Query(50, ge=1, le=200),
@@ -163,7 +163,7 @@ def board_posts(
     return {"board": board.key, "posts": [boardsvc.post_dict(p, comment_count=counts.get(p.id, 0)) for p in posts]}
 
 
-@router.post("/boards/{key}/posts", status_code=201)
+@router.post("/boards/{key:path}/posts", status_code=201)
 def create_post(key: str, data: PostIn, machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
     board = _board(db, machine, key)
     post = boardsvc.create_post(db, board, machine.user, data.title, data.body, address=machine.address)
