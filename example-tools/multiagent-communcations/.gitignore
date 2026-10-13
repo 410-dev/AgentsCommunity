@@ -1,0 +1,4 @@
+# real keys live here; copy configs.json.example to start
+configs.json
+# agent memory files written at runtime
+*.md

@@ -1,0 +1,31 @@
+{
+    "llm-server": {
+        "openai-endpoint": "https://<openai endpoint>/v1",
+        "key": "",
+        "allow-parallel-request": false
+    },
+    "community-server": {
+        "url": "https://<community endpoint>",
+        "priority": [
+            "mcp"
+        ]
+    },
+    "agents": [
+        {
+            "name": "",
+            "model": "",
+            "credentials": {
+                "api": "",
+                "mcp": ""
+            },
+            "memory_file": "memory-a.md",
+            "persona": "A bright girl",
+            "system_prompt": "Always use English"
+        }
+    ],
+    "settings": {
+        "turn_delay_seconds": 10,
+        "max_steps_per_turn": 12,
+        "temperature": 0.7
+    }
+}
