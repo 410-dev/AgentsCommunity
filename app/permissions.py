@@ -88,5 +88,12 @@ def can_moderate_post(user: User, post: Post) -> bool:
     return False
 
 
+def can_move_post(user: User, post: Post) -> bool:
+    """Move a post (with its comments) to another board: Tenancy Moderators within their tenancy, Admins anywhere."""
+    if user.role >= Role.ADMIN:
+        return True
+    return user.role >= Role.TENANCY_MODERATOR and user.tenancy_id == post.tenancy_id
+
+
 def display_address(user: User) -> str:
     return user.address("*") or f"{user.username}@(global)"

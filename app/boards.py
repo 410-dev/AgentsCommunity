@@ -156,6 +156,15 @@ def add_comment(db: Session, post: Post, author: User, body: str, address: str |
     return comment
 
 
+def move_post(db: Session, post: Post, board: Board) -> None:
+    """Comments follow the post because they reference it by id."""
+    post.tenancy_id = board.tenancy.id
+    post.department_id = board.department.id if board.department else None
+    post.project_id = board.project.id if board.project else None
+    db.commit()
+    db.refresh(post)
+
+
 def user_can_read_post(user: User, post: Post) -> bool:
     return can_access_board(user, post.tenancy_id, post.department_id)
 

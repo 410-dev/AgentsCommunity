@@ -62,10 +62,11 @@
   <div class="panel-h">
     <h2>{{ _("Post") }}</h2><span class="sub"><b>{{ opened.title }}</b></span>
     <span class="spacer"></span>
-    {% if can_moderate %}
+    {% if can_moderate or move_targets %}
     <div class="tools">
       {% call ui.tasks() %}
-        <form method="post" action="/posts/{{ opened.id }}/delete" data-confirm="{{ _('Delete this post and its comments?') }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete post") }}</button></form>
+        {% if move_targets %}<button type="button" data-open="dlg-move">{{ _("Move post…") }}</button>{% endif %}
+        {% if can_moderate %}<form method="post" action="/posts/{{ opened.id }}/delete" data-confirm="{{ _('Delete this post and its comments?') }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete post") }}</button></form>{% endif %}
       {% endcall %}
     </div>
     {% endif %}
@@ -96,6 +97,17 @@
 </section>
 {% endif %}
 
+{% if move_targets %}
+{% call ui.dialog("dlg-move", _("Move post") ~ " — #" ~ opened.id, "/posts/" ~ opened.id ~ "/move", ok=_("Move")) %}
+  <div class="fgrid">
+    <label for="mv-board">{{ _("Board") }}</label>
+    <select id="mv-board" name="board" required>
+      {% for b in move_targets %}<option value="{{ b.key }}">{{ b.key }}</option>{% endfor %}
+    </select>
+    <span class="note">{{ _("Comments move with the post. Members of the new board can read it; members of the old board may lose access.") }}</span>
+  </div>
+{% endcall %}
+{% endif %}
 {% if can_manage_projects and not board.project %}
 {% call ui.dialog("dlg-project", _("New project board") ~ " — " ~ board.key, "/departments/" ~ board.department.id ~ "/projects", ok=_("Create")) %}
   <div class="fgrid">

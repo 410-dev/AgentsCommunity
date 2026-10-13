@@ -137,3 +137,51 @@ def test_migration_adds_project_column(tmp_path):
     assert "project_id" in {c["name"] for c in inspect(engine).get_columns("posts")}
     with engine.connect() as conn:
         assert conn.execute(text("SELECT project_id FROM posts WHERE id = 1")).scalar() is None
+
+
+def test_tenancy_moderator_moves_posts(client, setup, db):
+    setup.user("tmod", tenancy=setup.ex, role=Role.TENANCY_MODERATOR, machines=())
+    other = setup.tenancy("other.org")
+    sales = setup.dept(other, "sales")
+    db.add(Project(department_id=setup.dev.id, name="pathway"))
+    db.commit()
+    r = client.post("/api/v1/boards/developers/posts", json={"title": "Misplaced", "body": "b"},
+                    headers=setup.auth("john:laptop"))
+    pid = r.json()["id"]
+    client.post(f"/api/v1/posts/{pid}/comments", json={"body": "c1"}, headers=setup.auth("john:laptop"))
+
+    # Plain users and department moderators cannot move posts, and see no move option.
+    for name in ("john", "lead"):
+        _login(client, name)
+        page = client.get(f"/posts/{pid}").text
+        assert 'data-open="dlg-move"' not in page
+        r = client.post(f"/posts/{pid}/move", data={"csrf_token": csrf_of(page), "board": "*:example.com"})
+        assert r.status_code == 403
+        client.post("/logout", data={"csrf_token": csrf_of(page)})
+
+    _login(client, "tmod")
+    page = client.get(f"/posts/{pid}").text
+    assert 'data-open="dlg-move"' in page and 'value="developers/pathway:example.com"' in page
+    assert "sales:other.org" not in page
+    r = client.post(f"/posts/{pid}/move", data={"csrf_token": csrf_of(page), "board": "developers/pathway:example.com"})
+    assert str(r.url).endswith(f"/boards/developers/pathway:example.com?open={pid}")
+    assert "Post moved from developers:example.com to developers/pathway:example.com." in r.text
+    post = client.get(f"/api/v1/posts/{pid}", headers=setup.auth("john:laptop")).json()
+    assert post["board"] == "developers/pathway:example.com" and [c["body"] for c in post["comments"]] == ["c1"]
+    assert client.get("/api/v1/boards/developers/posts", headers=setup.auth("john:laptop")).json()["posts"] == []
+
+    # To the ops board: john loses access, bob gains it.
+    r = client.post(f"/posts/{pid}/move", data={"csrf_token": csrf_of(r.text), "board": "ops:example.com"})
+    assert client.get(f"/api/v1/posts/{pid}", headers=setup.auth("john:laptop")).status_code == 404
+    assert client.get(f"/api/v1/posts/{pid}", headers=setup.auth("bob:laptop")).status_code == 200
+    # Other tenancies are out of reach for a Tenancy Moderator.
+    r = client.post(f"/posts/{pid}/move", data={"csrf_token": csrf_of(r.text), "board": "sales:other.org"})
+    assert r.status_code == 404
+    client.post("/logout", data={"csrf_token": csrf_of(client.get("/boards").text)})
+
+    # Admins can move across tenancies.
+    _login(client, "root")
+    page = client.get(f"/posts/{pid}").text
+    r = client.post(f"/posts/{pid}/move", data={"csrf_token": csrf_of(page), "board": "sales:other.org"})
+    assert str(r.url).endswith(f"/boards/sales:other.org?open={pid}")
+    assert client.get(f"/api/v1/posts/{pid}", headers=setup.auth("bob:laptop")).status_code == 404

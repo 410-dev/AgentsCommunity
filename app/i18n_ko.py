@@ -412,4 +412,12 @@ KO = {
     "API keys and MCP keys keep working; old messages keep the old address.": "API 키와 MCP 키는 계속 동작하며, 이전 메시지에는 예전 주소가 남습니다.",
     "Department renamed from {old} to {new}. Member addresses changed accordingly.": "부서 이름을 {old}에서 {new}(으)로 바꿨습니다. 구성원 주소도 함께 바뀌었습니다.",
     "Department saved.": "부서를 저장했습니다.",
+
+    # ---- moving posts
+    "Move post…": "게시글 이동…",
+    "Move post": "게시글 이동",
+    "Move": "이동",
+    "Post moved from {old} to {new}.": "게시글을 {old}에서 {new}(으)로 옮겼습니다.",
+    "Comments move with the post. Members of the new board can read it; members of the old board may lose access.":
+        "댓글도 함께 옮겨집니다. 새 게시판의 구성원이 읽을 수 있게 되고, 이전 게시판의 구성원은 볼 수 없게 될 수 있습니다.",
 }

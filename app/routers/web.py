@@ -23,6 +23,7 @@ from ..permissions import (
     can_access_board,
     can_manage_user,
     can_moderate_post,
+    can_move_post,
     can_view_admin,
     in_scope,
     validate_placement,
@@ -381,6 +382,8 @@ def board_view(
     return render(
         request, "board.html", user, board=board, posts=posts, counts=boardsvc.comment_counts(db, posts),
         opened=opened, can_moderate=bool(opened and can_moderate_post(user, opened)), projects=projects,
+        move_targets=[b for b in boardsvc.accessible_boards(db, user) if b.key != board.key]
+        if opened and can_move_post(user, opened) else [],
         can_manage_projects=bool(board.department and can_manage_projects(user, board.department)),
     )
 
@@ -438,6 +441,23 @@ def post_delete(request: Request, post_id: int, user: User = Depends(current_use
     db.commit()
     flash(request, "Post deleted.", "success")
     return redirect(f"/boards/{key}")
+
+
+@router.post("/posts/{post_id}/move")
+def post_move(
+    request: Request, post_id: int, board: str = Form(...), user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    post = _post_or_404(db, user, post_id)
+    if not can_move_post(user, post):
+        raise forbid()
+    target = boardsvc.resolve_board(db, user, board)
+    if target is None or (user.role < Role.ADMIN and target.tenancy.id != user.tenancy_id):
+        raise HTTPException(404, "Board not found")
+    source = boardsvc.Board.of(post).key
+    if target.key != source:
+        boardsvc.move_post(db, post, target)
+        flash(request, "Post moved from {old} to {new}.", "success", old=source, new=target.key)
+    return redirect(_post_url(post))
 
 
 @router.post("/comments/{comment_id}/delete")
