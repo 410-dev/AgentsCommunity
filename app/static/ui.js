@@ -108,6 +108,24 @@
     batchSync(form);
   });
 
+  // Live task board: <div data-task-panel="<board key>" data-version="..."> is re-fetched every 10 s
+  // (204 = unchanged). Skipped while a task dialog is open or the tab is hidden, so nothing being typed is lost.
+  var TASK_POLL_MS = 10000;
+  setInterval(function () {
+    var panel = document.querySelector("[data-task-panel]");
+    if (!panel || document.hidden || document.querySelector("dialog[open]")) return;
+    var url = "/task-panel?board=" + encodeURIComponent(panel.dataset.taskPanel) + "&v=" + encodeURIComponent(panel.dataset.version);
+    fetch(url, { credentials: "same-origin" }).then(function (r) {
+      return r.status === 200 ? r.text() : null;
+    }).then(function (html) {
+      if (!html || document.querySelector("dialog[open]")) return;
+      var tmp = document.createElement("div");
+      tmp.innerHTML = html;
+      var fresh = tmp.querySelector("[data-task-panel]");
+      if (fresh) panel.replaceWith(fresh);
+    }).catch(function () {});
+  }, TASK_POLL_MS);
+
   // Copy buttons: <button data-copy="elementId">
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-copy]");

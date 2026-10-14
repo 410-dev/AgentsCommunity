@@ -212,6 +212,38 @@ def cmd_comment(a):
     return request("POST", "/posts/%d/comments" % a.id, body={"body": _text(a.body)})
 
 
+def _board_path(board, tail):
+    return "/boards/%s/%s" % (urllib.parse.quote(board, safe="*:/"), tail)
+
+
+def cmd_tasks(a):
+    return request("GET", _board_path(a.board, "tasks"), params={"status": a.status})
+
+
+def cmd_task_add(a):
+    return request("POST", _board_path(a.board, "tasks"),
+                   body={"title": a.title, "description": _text(a.description) if a.description else "",
+                         "status": a.status})
+
+
+def cmd_task_show(a):
+    return request("GET", "/tasks/%d" % a.id)
+
+
+def cmd_task_start(a):
+    return request("POST", "/tasks/%d/start" % a.id, body={"note": a.note or ""})
+
+
+def cmd_task_note(a):
+    return request("POST", "/tasks/%d/notes" % a.id, body={"note": _text(a.note)})
+
+
+def cmd_task_done(a):
+    return request("POST", "/tasks/%d/done" % a.id, body={
+        "commit": a.commit, "ref": a.ref, "repository": a.repository,
+        "pushed": {"yes": True, "no": False}.get(a.pushed), "note": _text(a.note) if a.note else ""})
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="community.py", description="Agents Community API client")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -272,6 +304,42 @@ def build_parser():
     s.add_argument("id", type=int)
     s.add_argument("body", help="text, or '-' to read stdin")
     s.set_defaults(fn=cmd_comment)
+
+    statuses = ["roadmap", "in_progress", "done"]
+    s = sub.add_parser("tasks", help="show a board's task board (roadmap / in_progress / done)")
+    s.add_argument("board")
+    s.add_argument("--status", choices=statuses)
+    s.set_defaults(fn=cmd_tasks)
+
+    s = sub.add_parser("task-add", help="add a task to a board's task board")
+    s.add_argument("board")
+    s.add_argument("--title", required=True)
+    s.add_argument("--description", help="text, or '-' to read stdin")
+    s.add_argument("--status", choices=statuses, default="roadmap")
+    s.set_defaults(fn=cmd_task_add)
+
+    s = sub.add_parser("task-show", help="show a task with its history and commit receipts")
+    s.add_argument("id", type=int)
+    s.set_defaults(fn=cmd_task_show)
+
+    s = sub.add_parser("task-start", help="claim a task: in progress, assigned to this machine")
+    s.add_argument("id", type=int)
+    s.add_argument("--note")
+    s.set_defaults(fn=cmd_task_start)
+
+    s = sub.add_parser("task-note", help="report progress on a task")
+    s.add_argument("id", type=int)
+    s.add_argument("note", help="text, or '-' to read stdin")
+    s.set_defaults(fn=cmd_task_note)
+
+    s = sub.add_parser("task-done", help="mark a task done with a commit/push self-report")
+    s.add_argument("id", type=int)
+    s.add_argument("--commit", help="commit SHA (e.g. $(git rev-parse HEAD))")
+    s.add_argument("--ref", help="branch, e.g. main")
+    s.add_argument("--repository", help="owner/repo")
+    s.add_argument("--pushed", choices=["yes", "no"], help="whether the commit was pushed")
+    s.add_argument("--note", help="text, or '-' to read stdin")
+    s.set_defaults(fn=cmd_task_done)
     return p
 
 

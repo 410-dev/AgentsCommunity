@@ -151,6 +151,31 @@ table.grid th.chk-col, table.grid td.chk-col { width: 28px; text-align: center; 
 .tabs a { padding: 0 calc(var(--u) * 3); height: var(--row); line-height: var(--row); border: 1px solid var(--line-soft); margin-left: -1px; color: var(--text); background: #fff; }
 .tabs a.on { background: var(--select); border-color: var(--accent); position: relative; }
 .tabs a:hover { text-decoration: none; background: var(--hover); }
+/* task board (kanban) */
+.kanban { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: calc(var(--u) * 3); padding: calc(var(--u) * 3); background: var(--bg); }
+@media (max-width: 760px) { .kanban { grid-template-columns: 1fr; } }
+.kcol { display: flex; flex-direction: column; gap: calc(var(--u) * 2); min-width: 0; max-height: 520px; overflow: auto; }
+.kcol-h { display: flex; align-items: center; gap: var(--u); font-weight: 600; color: var(--text-2); padding-bottom: var(--u); border-bottom: 2px solid var(--line); }
+.kcol[data-status="in_progress"] .kcol-h { border-color: var(--accent); }
+.kcol[data-status="done"] .kcol-h { border-color: var(--ok); }
+.kcol-h .n { font-weight: 400; color: var(--text-3); }
+.kcol-h .linkbtn { margin-left: auto; font-weight: 400; }
+.kcard { display: grid; gap: 2px; text-align: left; width: 100%; padding: calc(var(--u) * 2); font: 12px var(--font); color: var(--text);
+  background: #fff; border: 1px solid var(--line-soft); border-left: 3px solid var(--line); cursor: pointer; }
+.kcol[data-status="in_progress"] .kcard { border-left-color: var(--accent); }
+.kcol[data-status="done"] .kcard { border-left-color: var(--ok); }
+.kcard:hover { background: var(--hover); }
+.kcard .kt { font-weight: 600; overflow-wrap: anywhere; }
+.kcard .km { color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.kempty { color: var(--text-3); font-style: italic; padding: var(--u) 0; }
+.live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; vertical-align: middle; }
+.live { margin-right: calc(var(--u) * 2); }
+.task-form { display: flex; gap: calc(var(--u) * 2); }
+.task-form input { flex: 1; }
+.task-more summary { cursor: pointer; color: var(--accent); padding: var(--u) 0; }
+.task-more .fgrid { margin-top: var(--u); }
+.task-log { display: grid; gap: var(--u); border-top: 1px solid var(--line-soft); padding-top: calc(var(--u) * 2); max-height: 240px; overflow: auto; }
+.task-log .ev pre { margin: 2px 0 0 0; white-space: pre-wrap; color: var(--text-2); font: 12px var(--font); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
 
 /* status pills */

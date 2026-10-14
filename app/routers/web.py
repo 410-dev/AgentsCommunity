@@ -1,19 +1,22 @@
+import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from .. import boards as boardsvc
+from .. import tasks as tasksvc
 from ..db import get_db
 from ..i18n import COOKIE as LANG_COOKIE, LANGUAGES, detect_language, translator
 from ..deps import csrf_protect, csrf_token, current_user, optional_user, super_admin_exists
 from ..messaging import MessagingError, send_message
 from ..models import (
-    ApiKey, Comment, Department, Machine, McpKey, Message, MessageDelivery, Post, Project, Tenancy, User, utcnow,
+    ApiKey, BoardHook, Comment, Department, Machine, McpKey, Message, MessageDelivery, Post, Project, Task, Tenancy,
+    User, utcnow,
 )
 from ..permissions import (
     assignable_roles,
@@ -26,6 +29,7 @@ from ..permissions import (
     can_manage_user,
     can_moderate_post,
     can_move_post,
+    display_address,
     can_view_admin,
     in_scope,
     validate_placement,
@@ -33,6 +37,7 @@ from ..permissions import (
 from ..roles import POLICY_ROLES, Role, role_label
 from ..security import (
     generate_api_key,
+    hash_api_key,
     generate_mcp_key,
     generate_webhook_secret,
     hash_password,
@@ -45,6 +50,8 @@ from ..webhooks import validate_webhook_url
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 templates.env.globals.update(role_label=role_label, Role=Role)
 templates.env.tests["manageable_by"] = lambda target, actor: can_manage_user(actor, target)
+templates.env.globals.update(task_status_labels=tasksvc.STATUS_LABELS, verification_labels=tasksvc.VERIFICATION_LABELS,
+                             can_edit_task=tasksvc.can_edit, can_delete_task=tasksvc.can_delete)
 templates.env.filters["dt"] = lambda v, seconds=False: v.strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M") if v else ""
 
 router = APIRouter(dependencies=[Depends(csrf_protect)], include_in_schema=False)
@@ -52,8 +59,9 @@ router = APIRouter(dependencies=[Depends(csrf_protect)], include_in_schema=False
 MIN_PASSWORD = 8
 
 
-def render(request: Request, name: str, user: User | None = None, status_code: int = 200, **ctx):
-    flashes = request.session.pop("flash", [])
+def render(request: Request, name: str, user: User | None = None, status_code: int = 200, fragment: bool = False,
+           **ctx):
+    flashes = [] if fragment else request.session.pop("flash", [])
     unread_total = 0
     db = object_session(user) if user is not None else None
     if db is not None:
@@ -418,6 +426,24 @@ def _board_or_404(db: Session, user: User, key: str) -> boardsvc.Board:
     return board
 
 
+def _task_ctx(db: Session, board: boardsvc.Board) -> dict:
+    columns = tasksvc.board_tasks(db, board)
+    receipts = tasksvc.receipts_for(db, columns["done"])
+    return {"columns": columns, "receipts": receipts, "task_version": tasksvc.board_version(db, board),
+            "verify": {t.id: tasksvc.verification(t, receipts.get(t.id, [])) for t in columns["done"]},
+            "ci": {t.id: tasksvc.ci_status(receipts.get(t.id, [])) for t in columns["done"]}}
+
+
+@router.get("/task-panel")
+def task_panel(request: Request, board: str, v: str = "", user: User = Depends(current_user),
+               db: Session = Depends(get_db)):
+    """The pinned task board alone; the board page polls it. 204 while nothing changed since version `v`."""
+    b = _board_or_404(db, user, board)
+    if v and v == tasksvc.board_version(db, b):
+        return Response(status_code=204)
+    return render(request, "_tasks_panel.html", user, fragment=True, board=b, **_task_ctx(db, b))
+
+
 @router.get("/boards/{key:path}")
 def board_view(
     request: Request,
@@ -427,7 +453,11 @@ def board_view(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    board = _board_or_404(db, user, key)
+    return _board_page(request, db, user, _board_or_404(db, user, key), before, open)
+
+
+def _board_page(request: Request, db: Session, user: User, board: boardsvc.Board, before: int | None = None,
+                open: int | None = None, new_hook: tuple[BoardHook, str] | None = None):
     posts = boardsvc.list_posts(db, board, limit=100, before_id=before)
     opened = db.get(Post, open) if open is not None else None
     if opened is not None and boardsvc.Board.of(opened).key != board.key:
@@ -448,6 +478,9 @@ def board_view(
         main_board=_main_board_url(board.tenancy, board.department),
         batch_posts=[p for p in posts if can_moderate_post(user, p)],
         batch_comments=[c for c in opened.comments if c.author_id == user.id or can_moderate] if opened else [],
+        hooks=list(db.scalars(select(BoardHook).where(*board.where(BoardHook)).order_by(BoardHook.id)))
+        if can_manage_projects(user, board.tenancy, board.department) else [],
+        new_hook=new_hook, **_task_ctx(db, board),
     )
 
 
@@ -585,6 +618,144 @@ def _flash_batch(request: Request, deleted: int, requested: int) -> None:
               n=deleted, total=requested)
     else:
         flash(request, "Deleted {n} item(s).", "success", n=deleted)
+
+
+# ---- task boards (pinned on every board) --------------------------------------
+
+
+def _task_or_404(db: Session, user: User, task_id: int) -> Task:
+    task = db.get(Task, task_id)
+    if task is None or not tasksvc.user_can_see(user, task):
+        raise HTTPException(404, "Task not found")
+    return task
+
+
+def _tasks_url(task_or_board) -> str:
+    board = tasksvc.board_of(task_or_board) if isinstance(task_or_board, Task) else task_or_board
+    return f"/boards/{board.key}#tasks"
+
+
+def _task_action(request: Request, fn, *args, **kwargs) -> None:
+    try:
+        fn(*args, **kwargs)
+    except tasksvc.TaskError as exc:
+        flash(request, exc.message, "error")
+
+
+@router.post("/tasks")
+def task_create(
+    request: Request,
+    board: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(""),
+    status: str = Form("roadmap"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    b = _board_or_404(db, user, board)
+    _task_action(request, tasksvc.create, db, b, user, display_address(user), title, description, status)
+    return redirect(_tasks_url(b))
+
+
+@router.post("/tasks/{task_id}/start")
+def task_start(request: Request, task_id: int, note: str = Form(""), user: User = Depends(current_user),
+               db: Session = Depends(get_db)):
+    task = _task_or_404(db, user, task_id)
+    _task_action(request, tasksvc.start, db, task, user, display_address(user), note)
+    return redirect(_tasks_url(task))
+
+
+@router.post("/tasks/{task_id}/note")
+def task_note(request: Request, task_id: int, note: str = Form(""), user: User = Depends(current_user),
+              db: Session = Depends(get_db)):
+    task = _task_or_404(db, user, task_id)
+    _task_action(request, tasksvc.report, db, task, user, display_address(user), note)
+    return redirect(_tasks_url(task))
+
+
+@router.post("/tasks/{task_id}/done")
+def task_done(
+    request: Request,
+    task_id: int,
+    commit: str = Form(""),
+    ref: str = Form(""),
+    repository: str = Form(""),
+    pushed: str = Form(""),
+    note: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    task = _task_or_404(db, user, task_id)
+    _task_action(request, tasksvc.complete, db, task, user, display_address(user), note, commit or None, ref or None,
+                 repository or None, {"yes": True, "no": False}.get(pushed))
+    return redirect(_tasks_url(task))
+
+
+@router.post("/tasks/{task_id}/edit")
+def task_edit(
+    request: Request,
+    task_id: int,
+    title: str = Form(...),
+    description: str = Form(""),
+    status: str = Form(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    task = _task_or_404(db, user, task_id)
+    if not tasksvc.can_edit(user, task):
+        raise forbid()
+    _task_action(request, tasksvc.edit, db, task, user, display_address(user), title, description, status)
+    return redirect(_tasks_url(task))
+
+
+@router.post("/tasks/{task_id}/delete")
+def task_delete(request: Request, task_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    task = _task_or_404(db, user, task_id)
+    if not tasksvc.can_delete(user, task):
+        raise forbid()
+    url = _tasks_url(task)
+    db.delete(task)
+    db.commit()
+    flash(request, "Task deleted.", "success")
+    return redirect(url)
+
+
+# ---- incoming webhooks (per board) --------------------------------------------
+
+
+@router.post("/board-hooks")
+def board_hook_create(
+    request: Request, board: str = Form(...), name: str = Form(...), user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    b = _board_or_404(db, user, board)
+    if not can_manage_projects(user, b.tenancy, b.department):
+        raise forbid()
+    name = name.strip().lower()
+    if not valid_name(name):
+        flash(request, "Webhook name must be lowercase letters, digits, '.', '_' or '-'.", "error")
+        return redirect(f"/boards/{b.key}")
+    token = "ach_" + secrets.token_urlsafe(32)
+    hook = BoardHook(**b.ids(), name=name, token_prefix=token[:12], token_hash=hash_api_key(token),
+                     secret=generate_webhook_secret(), created_by_id=user.id)
+    db.add(hook)
+    db.commit()
+    # The URL (it contains the token) is shown once and never stored.
+    return _board_page(request, db, user, b, new_hook=(hook, f"{request.base_url}hooks/{token}"))
+
+
+@router.post("/board-hooks/{hook_id}/revoke")
+def board_hook_revoke(request: Request, hook_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    hook = db.get(BoardHook, hook_id)
+    if hook is None or not can_access_board(user, hook.tenancy_id, hook.department_id):
+        raise HTTPException(404, "Webhook not found")
+    if not can_manage_projects(user, hook.tenancy, hook.department):
+        raise forbid()
+    if hook.revoked_at is None:
+        hook.revoked_at = utcnow()
+        db.commit()
+    flash(request, "Webhook {name} revoked.", "success", name=hook.name)
+    return redirect(f"/boards/{boardsvc.Board(hook.tenancy, hook.department, hook.project).key}")
 
 
 # ---- created (project) boards: inside a department or tenancy-wide ---------

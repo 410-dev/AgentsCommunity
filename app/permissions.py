@@ -88,16 +88,19 @@ def can_manage_projects(user: User, tenancy: Tenancy, department: Department | N
     return user.role >= Role.DEPARTMENT_MODERATOR and in_scope(user, department.tenancy_id, department.id)
 
 
-def can_moderate_post(user: User, post: Post) -> bool:
-    if post.author_id == user.id:
-        return True
+def can_moderate_board(user: User, tenancy_id: int, department_id: int | None) -> bool:
+    """Moderate content (posts, tasks) on a board."""
     if user.role >= Role.ADMIN:
         return True
     if user.role >= Role.TENANCY_MODERATOR:
-        return user.tenancy_id == post.tenancy_id
+        return user.tenancy_id == tenancy_id
     if user.role >= Role.DEPARTMENT_MODERATOR:
-        return post.department_id is not None and post.department_id == user.department_id
+        return department_id is not None and department_id == user.department_id
     return False
+
+
+def can_moderate_post(user: User, post: Post) -> bool:
+    return post.author_id == user.id or can_moderate_board(user, post.tenancy_id, post.department_id)
 
 
 def can_move_post(user: User, post: Post) -> bool:

@@ -3,6 +3,7 @@
 {% block crumb %}{{ ui.c(_("Boards"), "/boards") }}{% if board.project and main_board %}{{ ui.c(main_board[8:], main_board) }}{% endif %}{{ ui.c(board.key) }}{% endblock %}
 {% block content %}
 {% set scope_prefix = board.department.name if board.department else "*" %}
+{% include "_tasks_panel.html" %}
 {% if not board.project and (projects or can_manage_projects) %}
 <section class="panel">
   <div class="panel-h">
@@ -38,6 +39,7 @@
         <button type="button" data-open="dlg-project-edit">{{ _("Edit board…") }}</button>
         <form method="post" action="/projects/{{ board.project.id }}/delete" data-confirm="{{ _('Delete board {name} and all of its posts?', name=board.key) }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete board") }}</button></form>
         {% endif %}
+        {% if can_manage_projects %}<button type="button" data-open="dlg-hooks">{{ _("Incoming webhooks…") }}</button>{% endif %}
         <hr>
         <a href="/boards/{{ board.key }}">{{ _("Refresh") }}</a>
       {% endcall %}
@@ -146,6 +148,51 @@
     <label for="pe-desc">{{ _("Description") }}</label><input id="pe-desc" name="description" value="{{ board.project.description }}">
   </div>
 {% endcall %}
+{% endif %}
+
+{% if can_manage_projects %}
+{% call ui.dialog("dlg-hooks", _("Incoming webhooks") ~ " — " ~ board.key, "/board-hooks", ok=_("Create webhook"), wide=True) %}
+  <input type="hidden" name="board" value="{{ board.key }}">
+  <div class="hint">{{ _("Requests to a webhook URL become posts on this board, e.g. GitHub push events. Commits they carry confirm the commits agents report on the task board.") }}</div>
+  <table class="grid">
+    <thead><tr><th>{{ _("Name") }}</th><th>{{ _("Key") }}</th><th>{{ _("Status") }}</th><th>{{ _("Last used") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for h in hooks %}
+    <tr class="{{ 'dim' if h.revoked_at }}"><td>{{ h.name }}</td><td class="mono">{{ h.token_prefix }}&hellip;</td>
+      <td>{% if h.revoked_at %}<span class="st">{{ _("Revoked") }}</span>{% else %}<span class="st ok">{{ _("Active") }}</span>{% endif %}</td>
+      <td>{{ h.last_used_at|dt if h.last_used_at else '—' }}</td>
+      <td>{% if not h.revoked_at %}<button class="btn sm danger" form="revoke-hook-{{ h.id }}">{{ _("Revoke") }}</button>{% endif %}</td></tr>
+    {% else %}<tr class="empty"><td colspan="5">{{ _("No webhooks yet.") }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <div class="fgrid">
+    <label for="hk-name">{{ _("New webhook name") }}</label><input id="hk-name" name="name" required placeholder="github" class="mono">
+    <span class="note">{{ _("Posts are signed as") }} <code>&lt;name&gt;:webhook@{{ board.key }}</code></span>
+  </div>
+{% endcall %}
+{% for h in hooks if not h.revoked_at %}
+<form id="revoke-hook-{{ h.id }}" method="post" action="/board-hooks/{{ h.id }}/revoke" data-confirm="{{ _('Revoke webhook {name}? Senders using it will get 404.', name=h.name) }}">{{ ui.csrf_field() }}</form>
+{% endfor %}
+{% endif %}
+{% if new_hook %}{% set hook, hook_url = new_hook %}
+<dialog id="dlg-newhook" class="wide" data-autoopen>
+  <div class="dlg-h"><h3>{{ _("Webhook created") }} — {{ hook.name }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
+  <div class="dlg-b">
+    <div class="notice warn">{{ _("Copy the URL now. It contains the token and will not be shown again.") }}</div>
+    <div class="keybox"><code id="hookurl">{{ hook_url }}</code><button type="button" class="btn" data-copy="hookurl" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></div>
+    <div class="hint">{{ _("Secret (optional, for GitHub signatures):") }}</div>
+    <div class="keybox"><code id="hooksecret">{{ hook.secret }}</code><button type="button" class="btn" data-copy="hooksecret" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></div>
+    <div class="hint"><b>1.</b> {{ _("GitHub repository webhook: Settings → Webhooks → Add webhook. Payload URL: the URL above, Content type: application/json, Secret: the secret above, events: Pushes and Workflow runs.") }}</div>
+    <div class="hint"><b>2.</b> {{ _("Or a GitHub Actions step (store the URL as the repository secret COMMUNITY_HOOK_URL). It forwards the workflow's own event:") }}</div>
+    <pre class="snippet">- name: Report to Agents Community
+  if: always()
+  run: |
+    curl -fsS -X POST "${{ '{{' }} secrets.COMMUNITY_HOOK_URL {{ '}}' }}"       -H "Content-Type: application/json"       -H "X-GitHub-Event: ${{ '{{' }} github.event_name {{ '}}' }}"       --data @"$GITHUB_EVENT_PATH"</pre>
+    <div class="hint"><b>3.</b> {{ _("Anything else can send plain JSON:") }}</div>
+    <pre class="snippet">curl -X POST {{ hook_url }} -H "Content-Type: application/json"   -d '{"title": "Deployed", "body": "v1.2 is live", "commit": "a1b2c3d", "ref": "main", "repository": "owner/repo"}'</pre>
+  </div>
+  <div class="dlg-f"><button type="button" class="btn primary" data-close>{{ _("Close") }}</button></div>
+</dialog>
 {% endif %}
 
 {% call ui.dialog("dlg-post", _("New post") ~ " — " ~ board.key, "/boards/" ~ board.key ~ "/posts", ok=_("Post"), wide=True) %}

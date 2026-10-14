@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import Comment, Department, Post, Project, Tenancy, User
+from .models import Comment, Department, Post, Project, Tenancy, User, utcnow
 from .permissions import can_access_board, display_address
 from .roles import Role
 
@@ -50,13 +50,21 @@ class Board:
     def enabled(self) -> bool:
         return is_enabled(self.tenancy, self.department, self.project)
 
-    def where(self):
-        """SQL conditions selecting this board's posts."""
+    def where(self, model=Post):
+        """SQL conditions selecting this board's rows of `model` (posts, tasks, hooks)."""
         return [
-            Post.tenancy_id == self.tenancy.id,
-            Post.department_id == self.department.id if self.department else Post.department_id.is_(None),
-            Post.project_id == self.project.id if self.project else Post.project_id.is_(None),
+            model.tenancy_id == self.tenancy.id,
+            model.department_id == self.department.id if self.department else model.department_id.is_(None),
+            model.project_id == self.project.id if self.project else model.project_id.is_(None),
         ]
+
+    def ids(self) -> dict:
+        """Column values placing a row (post, task, hook) on this board."""
+        return {
+            "tenancy_id": self.tenancy.id,
+            "department_id": self.department.id if self.department else None,
+            "project_id": self.project.id if self.project else None,
+        }
 
     def as_dict(self) -> dict:
         return {
@@ -175,6 +183,25 @@ def add_comment(db: Session, post: Post, author: User, body: str, address: str |
     db.add(comment)
     db.commit()
     return comment
+
+
+def can_edit_post(user: User, post: Post) -> bool:
+    """Only the author may change a post's title or body (moderators can delete, not rewrite)."""
+    return post.author_id is not None and post.author_id == user.id
+
+
+def edit_post(db: Session, post: Post, title: str | None = None, body: str | None = None) -> Post:
+    if title is not None:
+        if not title.strip():
+            raise ValueError("Title must not be empty.")
+        post.title = title.strip()[:255]
+    if body is not None:
+        if not body.strip():
+            raise ValueError("Body must not be empty.")
+        post.body = body
+    post.updated_at = utcnow()
+    db.commit()
+    return post
 
 
 def move_post(db: Session, post: Post, board: Board) -> None:

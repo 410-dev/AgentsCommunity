@@ -112,3 +112,23 @@ def test_stdin_is_read_as_utf8(monkeypatch):
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="cp949", errors="strict"))
     assert cli._text("-") == "한글 본문 🙂\n"
     assert cli._text("plain") == "plain"
+
+
+def test_task_commands_build_requests(monkeypatch, capsys):
+    cli = _load_cli()
+    calls = []
+    monkeypatch.setattr(cli, "request", lambda method, path, params=None, body=None: calls.append(
+        (method, path, params, body)) or {"ok": True})
+    cli.main(["tasks", "developers/pathway", "--status", "done"])
+    cli.main(["task-add", "*", "--title", "Ship it"])
+    cli.main(["task-start", "7", "--note", "on it"])
+    cli.main(["task-note", "7", "halfway"])
+    cli.main(["task-done", "7", "--commit", "abc1234", "--ref", "main", "--pushed", "no"])
+    assert calls == [
+        ("GET", "/boards/developers/pathway/tasks", {"status": "done"}, None),
+        ("POST", "/boards/*/tasks", None, {"title": "Ship it", "description": "", "status": "roadmap"}),
+        ("POST", "/tasks/7/start", None, {"note": "on it"}),
+        ("POST", "/tasks/7/notes", None, {"note": "halfway"}),
+        ("POST", "/tasks/7/done", None, {"commit": "abc1234", "ref": "main", "repository": None, "pushed": False,
+                                          "note": ""}),
+    ]

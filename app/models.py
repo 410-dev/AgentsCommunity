@@ -363,3 +363,103 @@ class Comment(Base):
 
     post: Mapped[Post] = relationship(back_populates="comments")
     author: Mapped[User | None] = relationship()
+
+
+class BoardHook(Base):
+    """Incoming webhook: requests to /hooks/<token> (e.g. GitHub push events) become posts on one board."""
+
+    __tablename__ = "board_hooks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenancy_id: Mapped[int] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"))
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True
+    )
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
+    name: Mapped[str] = mapped_column(String(64))
+    token_prefix: Mapped[str] = mapped_column(String(16))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # Optional HMAC check: GitHub signs deliveries with this when it is set as the webhook secret.
+    secret: Mapped[str] = mapped_column(String(128))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tenancy: Mapped[Tenancy] = relationship()
+    department: Mapped[Department | None] = relationship()
+    project: Mapped[Project | None] = relationship()
+
+
+class CommitReceipt(Base):
+    """A commit an incoming webhook reported (e.g. GitHub received a push, or a workflow finished on it).
+    Tasks whose self-reported commit matches a receipt are shown as confirmed."""
+
+    __tablename__ = "commit_receipts"
+    __table_args__ = (Index("ix_receipts_sha", "tenancy_id", "sha"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenancy_id: Mapped[int] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"))
+    hook_id: Mapped[int | None] = mapped_column(ForeignKey("board_hooks.id", ondelete="SET NULL"), nullable=True)
+    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id", ondelete="SET NULL"), nullable=True)
+    sha: Mapped[str] = mapped_column(String(64))
+    repository: Mapped[str] = mapped_column(String(255), default="")
+    ref: Mapped[str] = mapped_column(String(255), default="")
+    event: Mapped[str] = mapped_column(String(32), default="push")  # push | workflow_run | custom
+    status: Mapped[str] = mapped_column(String(32), default="")  # workflow conclusion, e.g. success
+    message: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(String(2048), default="")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Task(Base):
+    """An item on a board's pinned task board: roadmap -> in_progress (by whom) -> done (commit/push report)."""
+
+    __tablename__ = "tasks"
+    __table_args__ = (Index("ix_tasks_board", "tenancy_id", "department_id", "project_id", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenancy_id: Mapped[int] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"))
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True
+    )
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="roadmap")  # roadmap | in_progress | done
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_address: Mapped[str] = mapped_column(String(512))
+    assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assignee_address: Mapped[str | None] = mapped_column(String(512), nullable=True)  # agent/machine working on it
+    # Self-reported on completion: which commit, on which branch, and whether it was pushed.
+    commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    commit_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    repository: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pushed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tenancy: Mapped[Tenancy] = relationship()
+    department: Mapped[Department | None] = relationship()
+    project: Mapped[Project | None] = relationship()
+    events: Mapped[list["TaskEvent"]] = relationship(
+        back_populates="task", order_by="TaskEvent.id", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class TaskEvent(Base):
+    """Status history of a task: who started, reported or completed it, and when."""
+
+    __tablename__ = "task_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_address: Mapped[str] = mapped_column(String(512))
+    kind: Mapped[str] = mapped_column(String(16))  # created | started | note | done | moved | edited
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    task: Mapped[Task] = relationship(back_populates="events")

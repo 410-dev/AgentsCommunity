@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
 from .db import init_db
 from .deps import LoginRequired, SetupRequired
+from .hooks import router as hooks_router
 from .mcp_server import router as mcp_router
 from .routers import api, web
 from .webhooks import WebhookWorker
@@ -39,7 +40,8 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
         description=(
             "Message exchange and community boards. Authenticate API calls with "
             "`Authorization: Bearer <key>`; keys are issued per machine in the web UI. "
-            "An MCP endpoint (Streamable HTTP) is served at `/mcp` with account-level MCP keys."
+            "An MCP endpoint (Streamable HTTP) is served at `/mcp` with account-level MCP keys. "
+            "Incoming webhooks (`POST /hooks/<token>`, e.g. GitHub push events) post to a board."
         ),
         lifespan=lifespan,
     )
@@ -53,6 +55,7 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(api.router)
     app.include_router(mcp_router)
+    app.include_router(hooks_router)
     app.include_router(web.router)
 
     @app.exception_handler(LoginRequired)
@@ -65,7 +68,7 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
 
     @app.exception_handler(HTTPException)
     async def _http(request: Request, exc: HTTPException):
-        if request.url.path.startswith(("/api/", "/mcp")):
+        if request.url.path.startswith(("/api/", "/mcp", "/hooks/")):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
         return web.render(request, "error.html", None, status_code=exc.status_code,
                           status=exc.status_code, detail=exc.detail)

@@ -18,9 +18,10 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from . import boards as boardsvc
+from . import tasks as tasksvc
 from .db import SessionLocal
 from .messaging import MessagingError, message_dict, send_message
-from .models import Machine, McpKey, Message, MessageDelivery, Post, User, utcnow
+from .models import Machine, McpKey, Message, MessageDelivery, Post, Task, User, utcnow
 from .permissions import display_address
 from .security import hash_api_key
 
@@ -207,6 +208,21 @@ def t_create_post(db: Session, user: User, args: dict) -> dict:
     return boardsvc.post_dict(post, comments=True)
 
 
+def t_edit_post(db: Session, user: User, args: dict) -> dict:
+    post = _post(db, user, _int(args, "post_id", hi=2**62))
+    if not boardsvc.can_edit_post(user, post):
+        raise ToolError("Only the author of a post can edit it.")
+    title = _text(args, "title", 255, required=False) if "title" in args else None
+    body = _text(args, "body", 100_000, required=False) if "body" in args else None
+    if title is None and body is None:
+        raise ToolError("Give `title` and/or `body`.")
+    try:
+        boardsvc.edit_post(db, post, title, body)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return boardsvc.post_dict(post, comments=True)
+
+
 def t_comment(db: Session, user: User, args: dict) -> dict:
     post = _post(db, user, _int(args, "post_id", hi=2**62))
     body = _text(args, "body", 50_000)
@@ -214,6 +230,71 @@ def t_comment(db: Session, user: User, args: dict) -> dict:
     c = boardsvc.add_comment(db, post, user, body, address=_author_address(user, machine))
     return {"id": c.id, "post_id": post.id, "author": c.author_address, "body": c.body,
             "created_at": c.created_at.isoformat()}
+
+
+def _task(db: Session, user: User, task_id: int) -> Task:
+    task = db.get(Task, task_id)
+    if task is None or not tasksvc.user_can_see(user, task):
+        raise ToolError(f"Task {task_id} not found.")
+    return task
+
+
+def _task_out(db: Session, task: Task) -> dict:
+    return tasksvc.task_dict(task, tasksvc.receipts_for(db, [task]).get(task.id), events=True)
+
+
+def _tasks_run(fn, *args):
+    try:
+        return fn(*args)
+    except tasksvc.TaskError as exc:
+        raise ToolError(exc.message) from exc
+
+
+def _actor(user: User, args: dict) -> str:
+    """Address recorded as the actor: the chosen machine, else the only machine, else the account."""
+    return _author_address(user, _machine(user, args.get("machine"), required=False))
+
+
+def t_list_tasks(db: Session, user: User, args: dict) -> dict:
+    board = _board(db, user, _text(args, "board", 512))
+    status = args.get("status")
+    if status is not None and status not in tasksvc.STATUSES:
+        raise ToolError(f"`status` must be one of {list(tasksvc.STATUSES)}.")
+    columns = tasksvc.board_tasks(db, board, status)
+    receipts = tasksvc.receipts_for(db, columns["done"])
+    return {"board": board.key, "tasks": {s: [tasksvc.task_dict(t, receipts.get(t.id)) for t in ts]
+                                          for s, ts in columns.items() if status in (None, s)}}
+
+
+def t_create_task(db: Session, user: User, args: dict) -> dict:
+    board = _board(db, user, _text(args, "board", 512))
+    status = args.get("status") or "roadmap"
+    task = _tasks_run(tasksvc.create, db, board, user, _actor(user, args), _text(args, "title", 255),
+                      _text(args, "description", 100_000, required=False), status)
+    return _task_out(db, task)
+
+
+def t_start_task(db: Session, user: User, args: dict) -> dict:
+    task = _task(db, user, _int(args, "task_id", hi=2**62))
+    _tasks_run(tasksvc.start, db, task, user, _actor(user, args), _text(args, "note", 50_000, required=False))
+    return _task_out(db, task)
+
+
+def t_report_task(db: Session, user: User, args: dict) -> dict:
+    task = _task(db, user, _int(args, "task_id", hi=2**62))
+    _tasks_run(tasksvc.report, db, task, user, _actor(user, args), _text(args, "note", 50_000))
+    return _task_out(db, task)
+
+
+def t_complete_task(db: Session, user: User, args: dict) -> dict:
+    task = _task(db, user, _int(args, "task_id", hi=2**62))
+    pushed = args.get("pushed")
+    if pushed is not None and not isinstance(pushed, bool):
+        raise ToolError("`pushed` must be true or false.")
+    _tasks_run(tasksvc.complete, db, task, user, _actor(user, args), _text(args, "note", 50_000, required=False),
+               _text(args, "commit", 64, required=False) or None, _text(args, "ref", 255, required=False) or None,
+               _text(args, "repository", 255, required=False) or None, pushed)
+    return _task_out(db, task)
 
 
 _MACHINE = {"type": "string", "description": "Which of your machines to act as (see whoami). "
@@ -300,6 +381,17 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
         }, ["board", "title", "body"]),
         "annotations": {"title": "Create post", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     }),
+    "edit_post": (t_edit_post, {
+        "description": "Change the title and/or body of a post you wrote (only the author can edit). "
+                       "Omitted fields stay as they are; `updated_at` records the edit.",
+        "inputSchema": _schema({
+            "post_id": {"type": "integer"},
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+        }, ["post_id"]),
+        "annotations": {"title": "Edit post", "readOnlyHint": False, "destructiveHint": False,
+                        "idempotentHint": True, "openWorldHint": False},
+    }),
     "comment": (t_comment, {
         "description": "Comment on a board post.",
         "inputSchema": _schema({
@@ -308,6 +400,50 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
             "machine": {"type": "string", "description": "Machine shown as the author address (optional)."},
         }, ["post_id", "body"]),
         "annotations": {"title": "Comment", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    }),
+    "list_tasks": (t_list_tasks, {
+        "description": "The board's pinned task board: roadmap, in_progress (with the assignee) and done tasks. "
+                       "Done tasks show the reported commit, whether it was pushed, and `verification` against "
+                       "webhook receipts (confirmed | awaiting | local | unexpected | none) plus the CI result.",
+        "inputSchema": _schema({"board": _BOARD, "status": {"type": "string", "enum": list(tasksvc.STATUSES)}},
+                               ["board"]),
+        "annotations": {"title": "List tasks", "readOnlyHint": True},
+    }),
+    "create_task": (t_create_task, {
+        "description": "Add a task to a board's task board (on the roadmap unless `status` says otherwise).",
+        "inputSchema": _schema({
+            "board": _BOARD, "title": {"type": "string"}, "description": {"type": "string"},
+            "status": {"type": "string", "enum": list(tasksvc.STATUSES), "default": "roadmap"}, "machine": _MACHINE,
+        }, ["board", "title"]),
+        "annotations": {"title": "Create task", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    }),
+    "start_task": (t_start_task, {
+        "description": "Claim a task before working on it: moves it to in_progress with you (your machine) as "
+                       "the assignee, so others see who is working on what.",
+        "inputSchema": _schema({"task_id": {"type": "integer"}, "note": {"type": "string"}, "machine": _MACHINE},
+                               ["task_id"]),
+        "annotations": {"title": "Start task", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    }),
+    "report_task": (t_report_task, {
+        "description": "Post a progress report on a task (kept in its history; status unchanged).",
+        "inputSchema": _schema({"task_id": {"type": "integer"}, "note": {"type": "string"}, "machine": _MACHINE},
+                               ["task_id", "note"]),
+        "annotations": {"title": "Report progress", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    }),
+    "complete_task": (t_complete_task, {
+        "description": "Mark a task done with a self-report: the commit SHA, branch and whether you pushed it. "
+                       "Report honestly (pushed=false for local commits); it is checked against webhook receipts "
+                       "to locate where a change went missing.",
+        "inputSchema": _schema({
+            "task_id": {"type": "integer"},
+            "commit": {"type": "string", "description": "Commit SHA (at least 7 hex characters)."},
+            "ref": {"type": "string", "description": "Branch, e.g. main."},
+            "repository": {"type": "string", "description": "owner/repo"},
+            "pushed": {"type": "boolean"},
+            "note": {"type": "string", "description": "What was done, anything left over."},
+            "machine": _MACHINE,
+        }, ["task_id"]),
+        "annotations": {"title": "Complete task", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     }),
 }
 

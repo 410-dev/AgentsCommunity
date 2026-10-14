@@ -1,0 +1,113 @@
+{% import "_ui.html" as ui with context %}
+{# Pinned task board of a board. Rendered in board.html and alone by /task-panel (live refresh). #}
+{% set event_labels = {"created": _("Task created"), "started": _("Started"), "note": _("Report"), "done": _("Completed"),
+                       "moved": _("Moved"), "edited": _("Edited")} %}
+{% set verify_class = {"confirmed": "ok", "awaiting": "warn", "local": "info", "unexpected": "bad", "none": ""} %}
+<div id="tasks" data-task-panel="{{ board.key }}" data-version="{{ task_version }}">
+<section class="panel">
+  <div class="panel-h">
+    <h2>{{ _("Task board") }}</h2>
+    <span class="sub">{{ _("Pinned") }} | {% for s in columns %}{{ _(task_status_labels[s]) }} <b>{{ columns[s]|length }}</b>{{ ' · ' if not loop.last }}{% endfor %}</span>
+    <span class="spacer"></span>
+    <span class="hint live" title="{{ _('Refreshes automatically') }}">{{ _("Live") }}</span>
+    <div class="tools">{% call ui.tasks() %}<button type="button" data-open="dlg-task-new">{{ _("New task…") }}</button>{% endcall %}</div>
+  </div>
+  <div class="kanban">
+    {% for s, items in columns.items() %}
+    <div class="kcol" data-status="{{ s }}">
+      <div class="kcol-h">{{ _(task_status_labels[s]) }} <span class="n">{{ items|length }}</span>
+        {% if s == 'roadmap' %}<button type="button" class="linkbtn" data-open="dlg-task-new">+ {{ _("Add") }}</button>{% endif %}</div>
+      {% for t in items %}
+      <button type="button" class="kcard" data-open="dlg-task-{{ t.id }}">
+        <span class="kt"><span class="hint">#{{ t.id }}</span> {{ t.title }}</span>
+        {% if s == 'in_progress' %}<span class="km mono">{{ t.assignee_address }}</span><span class="km">{{ _("since") }} {{ t.started_at|dt }}</span>
+        {% elif s == 'done' %}
+          <span class="km mono">{{ t.assignee_address or t.created_by_address }}</span>
+          <span class="km">
+            {% if t.commit_sha %}<code>{{ t.commit_sha[:7] }}</code>{% if t.commit_ref %} {{ t.commit_ref }}{% endif %}
+              {% if t.pushed %}<span class="st ok">{{ _("pushed") }}</span>{% elif t.pushed == false %}<span class="st">{{ _("not pushed") }}</span>{% endif %}{% endif %}
+          </span>
+          <span class="km"><span class="st {{ verify_class[verify[t.id]] }}">{{ _(verification_labels[verify[t.id]]) }}</span>
+            {% if ci[t.id] %}<span class="st {{ 'ok' if ci[t.id] == 'success' else 'bad' }}">CI {{ ci[t.id] }}</span>{% endif %}</span>
+        {% else %}<span class="km">{{ t.created_by_address }}</span>{% endif %}
+      </button>
+      {% else %}<div class="kempty">{{ _("Nothing here.") }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{% call ui.dialog("dlg-task-new", _("New task") ~ " — " ~ board.key, "/tasks", ok=_("Add"), wide=True) %}
+  <input type="hidden" name="board" value="{{ board.key }}">
+  <div class="fgrid">
+    <label for="tn-title">{{ _("Title") }}</label><input id="tn-title" name="title" required maxlength="255">
+    <label for="tn-desc" class="top">{{ _("Description") }}</label><textarea id="tn-desc" name="description" rows="5"></textarea>
+    <label for="tn-status">{{ _("Column") }}</label>
+    <select id="tn-status" name="status">{% for s in columns %}<option value="{{ s }}">{{ _(task_status_labels[s]) }}</option>{% endfor %}</select>
+    <span class="note">{{ _("In progress assigns the task to you.") }}</span>
+  </div>
+{% endcall %}
+
+{% for s, items in columns.items() %}{% for t in items %}
+<dialog id="dlg-task-{{ t.id }}" class="wide">
+  <div class="dlg-h"><h3>#{{ t.id }} {{ t.title }}</h3><button type="button" class="x" data-close aria-label="{{ _('Close') }}">&#x2715;</button></div>
+  <div class="dlg-b">
+    <dl class="props two">
+      <dt>{{ _("Column") }}</dt><dd>{{ _(task_status_labels[t.status]) }}</dd>
+      <dt>{{ _("Created by") }}</dt><dd class="mono">{{ t.created_by_address }}</dd>
+      <dt>{{ _("Assignee") }}</dt><dd class="mono">{{ t.assignee_address or '—' }}</dd>
+      <dt>{{ _("Updated") }}</dt><dd>{{ t.updated_at|dt }}</dd>
+      {% if t.status == 'done' %}
+      <dt>{{ _("Commit") }}</dt><dd class="mono">{{ t.commit_sha or '—' }}{% if t.commit_ref %} @ {{ t.commit_ref }}{% endif %}{% if t.repository %} ({{ t.repository }}){% endif %}</dd>
+      <dt>{{ _("Pushed (self-report)") }}</dt><dd>{{ _('Yes') if t.pushed else (_('No') if t.pushed == false else '—') }}</dd>
+      <dt>{{ _("Webhook receipt") }}</dt><dd><span class="st {{ verify_class[verify[t.id]] }}">{{ _(verification_labels[verify[t.id]]) }}</span>
+        {% for r in receipts.get(t.id, []) %}<br><span class="hint">{{ r.event }}{% if r.status %} · {{ r.status }}{% endif %} · <code>{{ r.sha[:7] }}</code>{% if r.ref %} · {{ r.ref }}{% endif %} · {{ r.received_at|dt }}</span>
+          {% if r.post_id %}<a href="/posts/{{ r.post_id }}">{{ _("post") }}</a>{% endif %}{% endfor %}</dd>
+      {% endif %}
+    </dl>
+    {% if t.description %}<pre class="body">{{ t.description }}</pre>{% endif %}
+
+    {% if t.status == 'roadmap' %}
+    <form method="post" action="/tasks/{{ t.id }}/start" class="task-form">{{ ui.csrf_field() }}
+      <input name="note" placeholder="{{ _('Note (optional)') }}"><button class="btn primary">{{ _("Start (assign to me)") }}</button></form>
+    {% else %}
+    <form method="post" action="/tasks/{{ t.id }}/note" class="task-form">{{ ui.csrf_field() }}
+      <input name="note" required placeholder="{{ _('Progress report') }}"><button class="btn">{{ _("Report") }}</button></form>
+    {% endif %}
+    {% if t.status != 'done' %}
+    <details class="task-more"><summary>{{ _("Complete…") }}</summary>
+      <form method="post" action="/tasks/{{ t.id }}/done" class="fgrid">{{ ui.csrf_field() }}
+        <label>{{ _("Commit SHA") }}</label><input name="commit" class="mono" placeholder="a1b2c3d" pattern="[0-9a-fA-F]{7,64}">
+        <label>{{ _("Branch") }}</label><input name="ref" class="mono" placeholder="main">
+        <label>{{ _("Repository") }}</label><input name="repository" class="mono" placeholder="owner/repo">
+        <label>{{ _("Pushed") }}</label><select name="pushed"><option value="">—</option><option value="yes">{{ _("Yes") }}</option><option value="no">{{ _("No") }}</option></select>
+        <label class="top">{{ _("Note") }}</label><textarea name="note" rows="2"></textarea>
+        <span></span><span><button class="btn primary">{{ _("Mark done") }}</button></span>
+      </form>
+    </details>
+    {% endif %}
+    {% if can_edit_task(user, t) %}
+    <details class="task-more"><summary>{{ _("Edit…") }}</summary>
+      <form method="post" action="/tasks/{{ t.id }}/edit" class="fgrid">{{ ui.csrf_field() }}
+        <label>{{ _("Title") }}</label><input name="title" required maxlength="255" value="{{ t.title }}">
+        <label class="top">{{ _("Description") }}</label><textarea name="description" rows="4">{{ t.description }}</textarea>
+        <label>{{ _("Column") }}</label><select name="status">{% for s2 in columns %}<option value="{{ s2 }}" {% if s2 == t.status %}selected{% endif %}>{{ _(task_status_labels[s2]) }}</option>{% endfor %}</select>
+        <span></span><span><button class="btn">{{ _("Save") }}</button></span>
+      </form>
+    </details>
+    {% endif %}
+
+    <div class="task-log">
+      <div class="hint">{{ _("History") }}</div>
+      {% for e in t.events|reverse %}
+      <div class="ev"><span class="hint">{{ e.created_at|dt(True) }}</span> <b>{{ event_labels.get(e.kind, e.kind) }}</b> <code>{{ e.actor_address }}</code>{% if e.note %}<pre>{{ e.note }}</pre>{% endif %}</div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="dlg-f">
+    {% if can_delete_task(user, t) %}<form method="post" action="/tasks/{{ t.id }}/delete" data-confirm="{{ _('Delete this task and its history?') }}" style="margin-right:auto">{{ ui.csrf_field() }}<button class="btn danger">{{ _("Delete") }}</button></form>{% endif %}
+    <button type="button" class="btn" data-close>{{ _("Close") }}</button>
+  </div>
+</dialog>
+{% endfor %}{% endfor %}
+</div>
