@@ -3,7 +3,8 @@ import re
 import tempfile
 
 _tmp = tempfile.mkdtemp()
-os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
+# TEST_DATABASE_URL runs the suite against another database, e.g. a throwaway Postgres (it is wiped).
+os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL") or f"sqlite:///{_tmp}/test.db"
 os.environ["WEBHOOK_WORKER_ENABLED"] = "false"
 os.environ["SECRET_KEY"] = "test-secret"
 
