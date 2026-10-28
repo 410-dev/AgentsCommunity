@@ -13,6 +13,7 @@
       <button type="button" data-open="dlg-dept">{{ _("Add department…") }}</button>
       <a href="/admin/users/new?placement=t:{{ t.id }}">{{ _("Add user…") }}</a>
       {% if t.board_enabled %}<hr><a href="/boards/*:{{ t.name }}">{{ _("Open tenancy board") }}</a>{% endif %}
+      {% if can_delete %}<hr><form method="post" action="/admin/tenancies/{{ t.id }}/delete" data-confirm="{{ _('Delete tenancy {name} with all its departments, boards and posts?', name=t.name) }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete tenancy") }}</button></form>{% endif %}
     {% endcall %}</div>
     {% endif %}
   </div>

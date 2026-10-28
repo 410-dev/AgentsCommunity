@@ -233,6 +233,32 @@ def test_batch_delete_departments(client, setup, db):
     assert r.status_code == 403
 
 
+def test_delete_tenancy(client, setup, db):
+    gone = setup.tenancy("gone.org")
+    sales = setup.dept(gone, "sales")
+    db.add_all([Project(department_id=sales.id, name="q4"),
+                Post(tenancy_id=gone.id, department_id=sales.id, author_address="x", title="t", body="b")])
+    db.commit()
+    gone_id = gone.id
+
+    # A Tenancy Moderator may not delete even their own tenancy.
+    csrf = _login(client, "tmod")
+    assert "Delete tenancy" not in client.get(f"/admin/tenancies/{setup.ex.id}").text
+    assert client.post(f"/admin/tenancies/{setup.ex.id}/delete", data={"csrf_token": csrf}).status_code == 403
+
+    _logout(client)
+    csrf = _login(client, "root")
+    assert "Delete tenancy" in client.get(f"/admin/tenancies/{setup.ex.id}").text
+    r = client.post(f"/admin/tenancies/{setup.ex.id}/delete", data={"csrf_token": csrf})
+    assert "Move or remove the tenancy" in r.text
+    r = client.post(f"/admin/tenancies/{gone_id}/delete", data={"csrf_token": csrf})
+    assert "Tenancy gone.org deleted" in r.text
+    db.expire_all()
+    assert sorted(d.name for d in db.query(Department)) == ["developers", "ops"]
+    assert db.query(Project).count() == 0 and db.query(Post).count() == 0
+    assert client.post(f"/admin/tenancies/{gone_id}/delete", data={"csrf_token": csrf}).status_code == 404
+
+
 def test_batch_delete_users(client, setup, db):
     client.post("/api/v1/boards/developers/posts", json={"title": "kept", "body": "b"},
                 headers=setup.auth("john:laptop"))

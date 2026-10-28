@@ -1171,7 +1171,7 @@ def admin_tenancy(request: Request, tenancy_id: int, user: User = Depends(curren
     return render(
         request, "admin/tenancy.html", user, t=t, counts=counts,
         users=_managed_users(db, user, tenancy_id=t.id),
-        can_manage=can_manage_tenancy(user, t), policy_roles=POLICY_ROLES,
+        can_manage=can_manage_tenancy(user, t), can_delete=can_create_tenancy(user), policy_roles=POLICY_ROLES,
     )
 
 
@@ -1211,6 +1211,21 @@ def admin_tenancy_policy(
     db.commit()
     flash(request, "Tenancy policy saved.", "success")
     return redirect(f"/admin/tenancies/{t.id}")
+
+
+@router.post("/admin/tenancies/{tenancy_id}/delete")
+def admin_tenancy_delete(request: Request, tenancy_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not can_create_tenancy(user):
+        raise forbid()
+    t = _tenancy_or_404(db, user, tenancy_id)
+    if db.scalar(select(func.count()).where(User.tenancy_id == t.id)):
+        flash(request, "Move or remove the tenancy's users first.", "error")
+        return redirect(f"/admin/tenancies/{t.id}")
+    name = t.name
+    db.delete(t)  # departments, boards, posts, hooks and tasks go with it (ON DELETE CASCADE)
+    db.commit()
+    flash(request, "Tenancy {name} deleted (including its departments and boards).", "success", name=name)
+    return redirect("/admin/tenancies")
 
 
 @router.post("/admin/tenancies/{tenancy_id}/departments")

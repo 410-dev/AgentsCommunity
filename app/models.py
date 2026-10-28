@@ -46,7 +46,7 @@ class Tenancy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     departments: Mapped[list["Department"]] = relationship(
-        back_populates="tenancy", order_by="Department.name"
+        back_populates="tenancy", order_by="Department.name", passive_deletes=True
     )
     projects: Mapped[list["Project"]] = relationship(
         primaryjoin="and_(Tenancy.id == Project.tenancy_id, Project.department_id.is_(None))",
