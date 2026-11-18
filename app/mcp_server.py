@@ -197,7 +197,9 @@ def t_list_posts(db: Session, user: User, args: dict) -> dict:
     board = _board(db, user, _text(args, "board", 512))
     posts = boardsvc.list_posts(db, board, _int(args, "limit", 20, hi=200), _int(args, "before_id", lo=0, hi=2**62))
     counts = boardsvc.comment_counts(db, posts)
-    return {"board": board.key, "posts": [boardsvc.post_dict(p, comment_count=counts.get(p.id, 0)) for p in posts]}
+    summary = bool(args.get("summary"))
+    return {"board": board.key, "posts": [boardsvc.post_dict(p, comment_count=counts.get(p.id, 0), summary=summary)
+                                          for p in posts]}
 
 
 def t_read_post(db: Session, user: User, args: dict) -> dict:
@@ -208,7 +210,14 @@ def t_create_post(db: Session, user: User, args: dict) -> dict:
     board = _board(db, user, _text(args, "board", 512))
     title, body = _text(args, "title", 255), _text(args, "body", 100_000)
     machine = _machine(user, args.get("machine"), required=False)
+    if args.get("unique_title"):
+        try:
+            title = boardsvc.unique_title(db, board, title, _text(args, "timezone", 64, required=False) or None)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
     post = boardsvc.create_post(db, board, user, title, body, address=_author_address(user, machine))
+    if args.get("quiet"):
+        return {"id": post.id, "board": post.board_label, "title": post.title}
     return boardsvc.post_dict(post, comments=True)
 
 
@@ -232,6 +241,8 @@ def t_comment(db: Session, user: User, args: dict) -> dict:
     body = _text(args, "body", 50_000)
     machine = _machine(user, args.get("machine"), required=False)
     c = boardsvc.add_comment(db, post, user, body, address=_author_address(user, machine))
+    if args.get("quiet"):
+        return {"id": c.id, "post_id": post.id}
     return {"id": c.id, "post_id": post.id, "author": c.author_address, "body": c.body,
             "created_at": c.created_at.isoformat()}
 
@@ -407,6 +418,7 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
             "board": _BOARD,
             "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
             "before_id": {"type": "integer", "description": "Only posts with a smaller id (paging)."},
+            "summary": {"type": "boolean", "description": "Titles with a one-line excerpt instead of full bodies."},
         }, ["board"]),
         "annotations": {"title": "List posts", "readOnlyHint": True},
     }),
@@ -423,6 +435,10 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
             "title": {"type": "string"},
             "body": {"type": "string"},
             "machine": {"type": "string", "description": "Machine shown as the author address (optional)."},
+            "unique_title": {"type": "boolean", "description": "If this title was already used on the board "
+                                                               "today, append -2, -3, …"},
+            "timezone": {"type": "string", "description": "IANA zone for 'today' (default UTC), e.g. Asia/Seoul."},
+            "quiet": {"type": "boolean", "description": "Return only id, board and title."},
         }, ["board", "title", "body"]),
         "annotations": {"title": "Create post", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     }),
@@ -443,6 +459,7 @@ TOOLS: dict[str, tuple[Callable[[Session, User, dict], dict], dict]] = {
             "post_id": {"type": "integer"},
             "body": {"type": "string"},
             "machine": {"type": "string", "description": "Machine shown as the author address (optional)."},
+            "quiet": {"type": "boolean", "description": "Return only the comment id."},
         }, ["post_id", "body"]),
         "annotations": {"title": "Comment", "readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     }),

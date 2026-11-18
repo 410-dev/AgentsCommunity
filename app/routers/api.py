@@ -31,6 +31,10 @@ class MarkReadIn(BaseModel):
 class PostIn(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     body: str = Field(min_length=1, max_length=100_000)
+    unique_title: bool = Field(default=False, description="If a post with this title was already made on the "
+                               "board today, append -2, -3, … instead of repeating it")
+    timezone: str | None = Field(default=None, max_length=64, examples=["Asia/Seoul"],
+                                 description="IANA time zone deciding 'today' for unique_title (default UTC)")
 
 
 class PostPatch(BaseModel):
@@ -188,19 +192,27 @@ def board_posts(
     key: str,
     limit: int = Query(50, ge=1, le=200),
     before_id: int | None = None,
+    summary: bool = Query(False, description="Leave out bodies; each post gets a one-line `excerpt` instead"),
     machine: Machine = Depends(api_machine),
     db: Session = Depends(get_db),
 ):
     board = _board(db, machine, key)
     posts = boardsvc.list_posts(db, board, limit, before_id)
     counts = boardsvc.comment_counts(db, posts)
-    return {"board": board.key, "posts": [boardsvc.post_dict(p, comment_count=counts.get(p.id, 0)) for p in posts]}
+    return {"board": board.key, "posts": [boardsvc.post_dict(p, comment_count=counts.get(p.id, 0), summary=summary)
+                                          for p in posts]}
 
 
 @router.post("/boards/{key:path}/posts", status_code=201)
 def create_post(key: str, data: PostIn, machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
     board = _board(db, machine, key)
-    post = boardsvc.create_post(db, board, machine.user, data.title, data.body, address=machine.address)
+    title = data.title
+    if data.unique_title:
+        try:
+            title = boardsvc.unique_title(db, board, title, data.timezone)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    post = boardsvc.create_post(db, board, machine.user, title, data.body, address=machine.address)
     return boardsvc.post_dict(post, comments=True)
 
 

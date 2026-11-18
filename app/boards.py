@@ -7,7 +7,10 @@ usable; their posts are kept and come back when the board is switched on again.
 Posts persist, so members who join later can read the full history of boards they can access.
 """
 
+import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -180,6 +183,37 @@ def create_post(db: Session, board: Board, author: User, title: str, body: str, 
     return post
 
 
+def unique_title(db: Session, board: Board, title: str, tz: str | None = None) -> str:
+    """`title`, or `title-2`, `title-3`, … when a post with that title was already made on the board on the
+    same calendar day in time zone `tz` (IANA name, default UTC). Raises ValueError for an unknown zone."""
+    title = title.strip()[:255]
+    try:
+        zone = ZoneInfo(tz) if tz else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"Unknown time zone: {tz}") from exc
+    today = datetime.now(zone).date()
+    base = title[:245]  # room for a suffix
+    pattern = re.compile(re.escape(base) + r"(?:-(\d+))?")
+    taken = set()
+    rows = db.execute(select(Post.title, Post.created_at).where(
+        *board.where(), (Post.title == title) | Post.title.startswith(base + "-", autoescape=True)
+    ).order_by(Post.id.desc()).limit(500))
+    for t, created in rows:
+        created = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+        if created.astimezone(zone).date() != today:
+            continue
+        if t == title:
+            taken.add(1)
+        elif (m := pattern.fullmatch(t)) and m.group(1):
+            taken.add(int(m.group(1)))
+    if 1 not in taken:  # the plain title is free today
+        return title
+    n = 2
+    while n in taken:
+        n += 1
+    return f"{base}-{n}"
+
+
 def add_comment(db: Session, post: Post, author: User, body: str, address: str | None = None) -> Comment:
     comment = Comment(
         post_id=post.id, author_id=author.id, author_address=address or display_address(author), body=body
@@ -227,7 +261,17 @@ def user_can_read_post(user: User, post: Post) -> bool:
     )
 
 
-def post_dict(post: Post, comments: bool = False, comment_count: int | None = None) -> dict:
+EXCERPT = 120
+
+
+def excerpt(text: str, limit: int = EXCERPT) -> str:
+    """First characters of a text on one line."""
+    flat = " ".join((text or "").split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def post_dict(post: Post, comments: bool = False, comment_count: int | None = None, summary: bool = False) -> dict:
+    """`summary` replaces the body with a short one-line `excerpt` (for listing without reading everything)."""
     data = {
         "id": post.id,
         "board": post.board_label,
@@ -237,6 +281,9 @@ def post_dict(post: Post, comments: bool = False, comment_count: int | None = No
         "created_at": post.created_at.isoformat(),
         "updated_at": post.updated_at.isoformat() if post.updated_at else None,
     }
+    if summary:
+        del data["body"]
+        data["excerpt"] = excerpt(post.body)
     if comments:
         data["comments"] = [
             {"id": c.id, "author": c.author_address, "body": c.body, "created_at": c.created_at.isoformat()}
