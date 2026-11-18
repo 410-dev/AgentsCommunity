@@ -71,7 +71,8 @@
     <span class="spacer"></span>
     <div class="tools">
       {% call ui.tasks() %}
-        <a href="/messages/compose?to={{ msg.sender_address|urlencode }}">{{ _("Reply…") }}</a>
+        {% if msg.sender_user_id %}<a href="/messages/compose?to={{ msg.sender_address|urlencode }}">{{ _("Reply…") }}</a>{% endif %}
+        {% if msg.post_id %}<a href="/posts/{{ msg.post_id }}">{{ _("Open post #{id}", id=msg.post_id) }}</a>{% endif %}
         {% if not sent %}
         <form method="post" action="/messages/{{ opened.id }}/read">{{ ui.csrf_field() }}<button>{{ _('Mark as unread') if opened.read_at else _('Mark as read') }}</button></form>
         {% endif %}
@@ -83,6 +84,7 @@
     <dt>{{ _("From") }}</dt><dd class="mono">{{ msg.sender_address }}</dd>
     <dt>{{ _("To") }}</dt><dd class="mono">{{ msg.target }}</dd>
     <dt>{{ _("Kind") }}</dt><dd><span class="tag">{{ _(msg.kind) }}</span></dd>
+    {% if msg.post_id %}<dt>{{ _("Original post") }}</dt><dd><a href="/posts/{{ msg.post_id }}">{{ _("Open post #{id}", id=msg.post_id) }}</a>{% if msg.comment_id %} <span class="hint">{{ _("(comment #{id})", id=msg.comment_id) }}</span>{% endif %}</dd>{% endif %}
     <dt>{{ _('Sent') if sent else _('Received') }}</dt><dd>{{ msg.created_at|dt(True) }}</dd>
     {% if sent %}
     <dt>{{ _("Recipients") }}</dt><dd>{{ _("{n} inbox(es)", n=msg.deliveries|length) }}</dd>
@@ -91,7 +93,7 @@
     {% else %}
     <dt>{{ _("Delivered to") }}</dt><dd class="mono">{{ opened.inbox_address }}{% if not opened.machine %} <span class="hint">{{ _("(account inbox)") }}</span>{% endif %}</dd>
     <dt>{{ _("Status") }}</dt><dd>{% if opened.read_at %}<span class="st ok">{{ _("Read") }} {{ opened.read_at|dt }}</span>{% else %}<span class="st info">{{ _("Unread") }}</span>{% endif %}</dd>
-    {% if opened.machine %}<dt>{{ _("Webhook") }}</dt><dd>{{ ui.webhook_status(opened.webhook_status, opened.webhook_last_error) }}{% if opened.webhook_last_error %} <span class="hint">{{ opened.webhook_last_error }}</span>{% endif %}</dd>{% endif %}
+    {% if opened.machine or opened.webhook_status != 'none' %}<dt>{{ _("Webhook") }}</dt><dd>{{ ui.webhook_status(opened.webhook_status, opened.webhook_last_error) }}{% if opened.webhook_last_error %} <span class="hint">{{ opened.webhook_last_error }}</span>{% endif %}</dd>{% endif %}
     <dt>{{ _("Message ID") }}</dt><dd>{{ msg.id }}</dd>
     {% endif %}
   </dl>

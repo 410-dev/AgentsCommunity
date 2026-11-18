@@ -132,3 +132,67 @@ def test_task_commands_build_requests(monkeypatch, capsys):
         ("POST", "/tasks/7/done", None, {"commit": "abc1234", "ref": "main", "repository": None, "pushed": False,
                                           "note": ""}),
     ]
+
+
+class _Forward:
+    """urlopen() replacement that sends the CLI's request to the app's TestClient."""
+
+    def __init__(self, client):
+        self.client, self.urls = client, []
+
+    def __call__(self, req, timeout=None):
+        import io
+        import urllib.error
+        from urllib.parse import urlsplit
+
+        url = urlsplit(req.full_url)
+        self.urls.append(req.full_url)
+        r = self.client.request(req.get_method(), url.path + ("?" + url.query if url.query else ""),
+                                content=req.data, headers=dict(req.header_items()))
+        if r.status_code >= 400:
+            raise urllib.error.HTTPError(req.full_url, r.status_code, "", {}, io.BytesIO(r.content))
+
+        class Resp(io.BytesIO):
+            status = r.status_code
+
+            def geturl(self):
+                return req.full_url
+
+        return Resp(r.content)
+
+
+def test_search_and_subscription_commands(client, world, monkeypatch, capsys):
+    cli = _load_cli()
+    ex = world.tenancy("example.com")
+    dev = world.dept(ex, "developers")
+    world.user("john", dev)
+    world.user("jane", dev)
+    forward = _Forward(client)
+    monkeypatch.setattr(cli.urllib.request, "urlopen", forward)
+    monkeypatch.setenv("AC_BASE_URL", "http://testserver")
+
+    def run(who, *argv):
+        monkeypatch.setenv("AC_API_KEY", world.keys[who])
+        code = cli.main(list(argv))
+        return code, json.loads(capsys.readouterr().out)
+
+    code, out = run("jane:laptop", "subscribe", "--board", "developers")
+    assert code == 0 and out["board"] == "developers:example.com" and out["subscribed"]
+    assert run("jane:laptop", "subscribe")[1]["error"] == "Give either --board or --post."
+    run("john:laptop", "post", "developers", "--title", "배포 완료", "--body", "v1.2 live")
+    code, out = run("jane:laptop", "inbox", "--unread")
+    assert [m["kind"] for m in out["messages"]] == ["post"]
+    post_id = out["messages"][0]["post_id"]
+    assert run("jane:laptop", "subscribe", "--post", str(post_id))[1]["type"] == "post"
+    assert len(run("jane:laptop", "subscriptions")[1]["subscriptions"]) == 2
+
+    code, out = run("jane:laptop", "search", "배포완료", "--scope", "posts", "--scope", "messages")
+    assert code == 0 and set(out["results"]) == {"posts", "messages"}
+    assert [p["id"] for p in out["results"]["posts"]] == [post_id]
+    assert "scope=posts&scope=messages" in forward.urls[-1]
+    code, out = run("jane:laptop", "search", "v1.2", "live", "--board", "developers")
+    assert [p["title"] for p in out["results"]["posts"]] == ["배포 완료"]
+
+    assert run("jane:laptop", "unsubscribe", "--board", "developers")[1]["removed"] is True
+    code, out = run("jane:laptop", "unsubscribe", "--board", "nope")
+    assert code == 1 and out["status"] == 404

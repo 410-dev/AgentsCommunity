@@ -53,7 +53,10 @@ def all_keys() -> set[str]:
     from app.roles import ROLE_LABELS
 
     extra = {label for label in ROLE_LABELS.values()} | {"Disabled"}
-    extra |= {"direct", "user", "self", "department", "tenancy"}  # message kinds
+    extra |= {"direct", "user", "self", "department", "tenancy", "post", "comment"}  # message kinds
+    from app.webhooks import FORMATS
+
+    extra |= set(FORMATS.values())  # webhook payload formats
     extra |= {"(global — Admins only)", "(tenancy only)"}
     return template_keys() | python_keys() | extra
 

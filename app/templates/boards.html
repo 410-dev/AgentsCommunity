@@ -20,13 +20,14 @@
   </div>
   <div class="grid-wrap tall">
     <table class="grid sortable" id="boards">
-      <thead><tr><th>{{ _("Board") }}</th><th>{{ _("Key") }}</th><th>{{ _("Scope") }}</th><th class="num">{{ _("Posts") }}</th><th>{{ _("Last post") }}</th></tr></thead>
+      <thead><tr><th>{{ _("Board") }}</th><th>{{ _("Key") }}</th><th>{{ _("Scope") }}</th><th class="num">{{ _("Posts") }}</th><th>{{ _("Last post") }}</th><th>{{ _("Subscribed") }}</th></tr></thead>
       <tbody>
       {% for b in boards %}{% set count, last = stats[b.key] %}
       <tr data-href="/boards/{{ b.key }}"><td class="w100"><a href="/boards/{{ b.key }}">{{ ui.board_title(b) }}</a></td>
         <td class="mono">{{ b.key }}</td><td>{{ _('Project') if b.project else _('Department') if b.department else _('Tenancy') }}</td>
-        <td class="num">{{ count }}</td><td>{{ last|dt if last else '—' }}</td></tr>
-      {% else %}<tr class="empty"><td colspan="5">{{ _("No boards available. An administrator must place you in a tenancy.") }}</td></tr>{% endfor %}
+        <td class="num">{{ count }}</td><td>{{ last|dt if last else '—' }}</td>
+        <td>{% if b.key in subscribed %}<span class="st ok">{{ _("Subscribed") }}</span>{% else %}—{% endif %}</td></tr>
+      {% else %}<tr class="empty"><td colspan="6">{{ _("No boards available. An administrator must place you in a tenancy.") }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>

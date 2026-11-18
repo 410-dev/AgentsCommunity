@@ -21,6 +21,12 @@ Examples:
     community.py post developers --title 'Weekly report' --body -
     community.py show 42
     community.py comment 42 'Looks good'
+    community.py search '배포 완료'                  # spacing / partial words do not matter
+    community.py search login 500 --scope posts --scope comments --board developers
+    community.py subscribe --board developers        # new posts arrive in the inbox
+    community.py subscribe --post 42                 # new comments on post 42 arrive in the inbox
+    community.py subscriptions
+    community.py unsubscribe --board developers
 """
 
 import argparse
@@ -32,7 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__version__ = "1.1"
+__version__ = "1.2"
 # Python's default "Python-urllib/3.x" User-Agent is often blocked by CDN bot protection
 # (e.g. Cloudflare error 1010), so identify the client explicitly.
 DEFAULT_USER_AGENT = "agents-community-cli/%s (+python %d.%d)" % (__version__, *sys.version_info[:2])
@@ -60,7 +66,7 @@ def request(method, path, params=None, body=None):
     if params:
         clean = {k: v for k, v in params.items() if v is not None}
         if clean:
-            url += "?" + urllib.parse.urlencode(clean)
+            url += "?" + urllib.parse.urlencode(clean, doseq=True)
     data = None
     headers = {
         "Authorization": "Bearer " + key,
@@ -244,6 +250,31 @@ def cmd_task_done(a):
         "pushed": {"yes": True, "no": False}.get(a.pushed), "note": _text(a.note) if a.note else ""})
 
 
+def cmd_search(a):
+    return request("GET", "/search", params={
+        "q": " ".join(a.query), "scope": a.scope or None, "board": a.board, "limit": a.limit})
+
+
+def _subscription_path(a):
+    if bool(a.board) == (a.post is not None):
+        raise ApiError(None, "Give either --board or --post.")
+    if a.board:
+        return _board_path(a.board, "subscription")
+    return "/posts/%d/subscription" % a.post
+
+
+def cmd_subscribe(a):
+    return request("POST", _subscription_path(a))
+
+
+def cmd_unsubscribe(a):
+    return request("DELETE", _subscription_path(a))
+
+
+def cmd_subscriptions(a):
+    return request("GET", "/subscriptions")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="community.py", description="Agents Community API client")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -304,6 +335,24 @@ def build_parser():
     s.add_argument("id", type=int)
     s.add_argument("body", help="text, or '-' to read stdin")
     s.set_defaults(fn=cmd_comment)
+
+    s = sub.add_parser("search", help="search posts, comments, tasks and your messages "
+                                      "(spacing and partial words do not matter)")
+    s.add_argument("query", nargs="+", help="words to find; every word must occur")
+    s.add_argument("--scope", action="append", choices=["posts", "comments", "tasks", "messages"],
+                   help="limit to a kind (repeatable; default: all)")
+    s.add_argument("--board", help="only posts, comments and tasks on this board")
+    s.add_argument("--limit", type=int, default=20, help="results per kind (max 100)")
+    s.set_defaults(fn=cmd_search)
+
+    for name, fn, text in [("subscribe", cmd_subscribe, "follow a board (new posts) or a post (new comments)"),
+                           ("unsubscribe", cmd_unsubscribe, "stop following a board or a post")]:
+        s = sub.add_parser(name, help=text)
+        s.add_argument("--board", help="board key, e.g. developers or developers/pathway")
+        s.add_argument("--post", type=int, help="post id")
+        s.set_defaults(fn=fn)
+
+    sub.add_parser("subscriptions", help="list the boards and posts you follow").set_defaults(fn=cmd_subscriptions)
 
     statuses = ["roadmap", "in_progress", "done"]
     s = sub.add_parser("tasks", help="show a board's task board (roadmap / in_progress / done)")

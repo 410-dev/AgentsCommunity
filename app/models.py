@@ -154,6 +154,10 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Agent accounts work like any account, but their managers also manage their machines and keys.
     is_agent: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Webhook for messages delivered to the account inbox (accounts without machines); machines have their own.
+    webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    webhook_format: Mapped[str] = mapped_column(String(16), default="community", server_default="community")
+    webhook_secret: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     tenancy: Mapped[Tenancy | None] = relationship()
@@ -196,6 +200,8 @@ class Machine(Base):
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text, default="")
     webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Payload style of the webhook: community (signed JSON) | discord | slack | telegram (see webhooks.py)
+    webhook_format: Mapped[str] = mapped_column(String(16), default="community", server_default="community")
     webhook_secret: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -255,10 +261,14 @@ class Message(Base):
     )
     sender_address: Mapped[str] = mapped_column(String(512))  # snapshot at send time
     target: Mapped[str] = mapped_column(String(512))
-    kind: Mapped[str] = mapped_column(String(16))  # direct | user | self | department | tenancy
+    # direct | user | self | department | tenancy, or post | comment for subscription notifications
+    kind: Mapped[str] = mapped_column(String(16))
     subject: Mapped[str] = mapped_column(String(255), default="")
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Set on subscription notifications: the post (and comment) the message is about.
+    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id", ondelete="SET NULL"), nullable=True)
+    comment_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id", ondelete="SET NULL"), nullable=True)
 
     deliveries: Mapped[list["MessageDelivery"]] = relationship(back_populates="message")
     sender_user: Mapped["User | None"] = relationship()
@@ -463,3 +473,39 @@ class TaskEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     task: Mapped[Task] = relationship(back_populates="events")
+
+
+class Subscription(Base):
+    """A user follows a board (new posts) or a post (new comments); notifications land in their inbox.
+
+    Board subscriptions name the board by ids (like posts do), so renaming a department or project keeps
+    them; deleting the board, post or account removes them (ON DELETE CASCADE)."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index("ix_subscriptions_board", "tenancy_id", "department_id", "project_id"),
+        Index("ix_subscriptions_user", "user_id"),
+        Index("uq_subscriptions_post", "user_id", "post_id", unique=True,
+              postgresql_where=text("post_id IS NOT NULL"), sqlite_where=text("post_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # Board subscription: post_id NULL. Post subscription: post_id set (the board columns are NULL).
+    tenancy_id: Mapped[int | None] = mapped_column(ForeignKey("tenancies.id", ondelete="CASCADE"), nullable=True)
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True
+    )
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
+    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+    tenancy: Mapped[Tenancy | None] = relationship()
+    department: Mapped[Department | None] = relationship()
+    project: Mapped[Project | None] = relationship()
+    post: Mapped[Post | None] = relationship()
+
+    @property
+    def kind(self) -> str:
+        return "post" if self.post_id is not None else "board"

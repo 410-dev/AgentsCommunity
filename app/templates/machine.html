@@ -12,6 +12,7 @@
       {% call ui.tasks() %}
         <button type="button" data-open="dlg-key">{{ _("Issue API key…") }}</button>
         <button type="button" data-open="dlg-webhook">{{ _("Configure webhook…") }}</button>
+        {% if m.webhook_url %}<form method="post" action="/machines/{{ m.id }}/webhook/test">{{ ui.csrf_field() }}<button>{{ _("Send test message") }}</button></form>{% endif %}
         <form method="post" action="/machines/{{ m.id }}/webhook/rotate" data-confirm="{{ _('Rotate the webhook secret? Receivers must be updated.') }}">{{ ui.csrf_field() }}<button>{{ _("Rotate webhook secret") }}</button></form>
         {% if failed_webhooks %}<form method="post" action="/machines/{{ m.id }}/webhook/retry">{{ ui.csrf_field() }}<button>{{ _("Retry failed deliveries ({n})", n=failed_webhooks) }}</button></form>{% endif %}
         {% if own %}<a href="/messages?machine={{ m.id }}">{{ _("Open inbox") }}</a>{% endif %}
@@ -30,6 +31,7 @@
     <dt>{{ _("Description") }}</dt><dd>{{ m.description or '—' }}</dd>
     <dt>{{ _("Active API keys") }}</dt><dd>{{ m.api_keys|selectattr('revoked_at', 'none')|list|length }}</dd>
     <dt>{{ _("Webhook URL") }}</dt><dd class="mono">{% if m.webhook_url %}{{ m.webhook_url }}{% else %}<a href="#" data-open="dlg-webhook">{{ _("Not configured") }}</a>{% endif %}</dd>
+    <dt>{{ _("Format") }}</dt><dd>{{ _(webhook_formats.get(m.webhook_format, m.webhook_format)) }}</dd>
     <dt>{{ _("Failed deliveries") }}</dt><dd>{% if failed_webhooks %}<span class="st bad">{{ failed_webhooks }}</span>{% else %}<span class="st ok">0</span>{% endif %}</dd>
     <dt>{{ _("Webhook secret") }}</dt><dd><code id="whsecret" data-secret="{{ m.webhook_secret }}">{{ m.webhook_secret }}</code> <button type="button" class="btn sm" data-copy="whsecret" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></dd>
     <dt>{{ _("Signature header") }}</dt><dd class="mono">X-Community-Signature: sha256=HMAC(secret, body)</dd>
@@ -69,10 +71,7 @@
 {% endcall %}
 
 {% call ui.dialog("dlg-webhook", _("Configure webhook"), "/machines/" ~ m.id ~ "/webhook", ok=_("Save"), wide=True) %}
-  <div class="fgrid">
-    <label for="w-url">URL</label><input id="w-url" name="webhook_url" value="{{ m.webhook_url or '' }}" placeholder="https://agent.example.com/hook" class="mono">
-    <span class="note">{{ _("New messages for this machine are POSTed as JSON. Leave empty to disable. Failed deliveries are retried with backoff.") }}</span>
-  </div>
+  {{ ui.webhook_fields(m.webhook_url, m.webhook_format) }}
 {% endcall %}
 
 {% if new_key %}

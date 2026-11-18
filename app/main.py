@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
-from .config import settings
+from .config import request_base_url, settings
 from .db import init_db
 from .deps import LoginRequired, SetupRequired
 from .hooks import router as hooks_router
@@ -19,6 +19,22 @@ from .webhooks import WebhookWorker
 logging.basicConfig(level=logging.INFO)
 
 SKILL_DIR = Path(__file__).resolve().parent.parent / "skills" / "agents-community"
+
+
+class BaseUrlMiddleware:
+    """Remember the request's base URL (proxy headers applied) for absolute links in notifications."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        token = request_base_url.set(str(Request(scope).base_url))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            request_base_url.reset(token)
 
 
 def create_app(start_worker: bool | None = None, create_tables: bool = True) -> FastAPI:
@@ -52,6 +68,7 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
         https_only=settings.session_https_only,
         max_age=60 * 60 * 24 * 7,
     )
+    app.add_middleware(BaseUrlMiddleware)
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(api.router)
     app.include_router(mcp_router)

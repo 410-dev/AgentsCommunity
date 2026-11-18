@@ -9,14 +9,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from .. import boards as boardsvc
+from .. import search as searchsvc
+from .. import subscriptions as subsvc
 from .. import tasks as tasksvc
 from ..db import get_db
 from ..i18n import COOKIE as LANG_COOKIE, LANGUAGES, detect_language, translator
 from ..deps import csrf_protect, csrf_token, current_user, optional_user, super_admin_exists
 from ..messaging import MessagingError, send_message
 from ..models import (
-    ApiKey, BoardHook, Comment, Department, Machine, McpKey, Message, MessageDelivery, Post, Project, Task, Tenancy,
-    User, utcnow,
+    ApiKey, BoardHook, Comment, Department, Machine, McpKey, Message, MessageDelivery, Post, Project, Subscription,
+    Task, Tenancy, User, utcnow,
 )
 from ..permissions import (
     assignable_roles,
@@ -45,13 +47,14 @@ from ..security import (
     valid_tenancy_name,
     verify_password,
 )
-from ..webhooks import validate_webhook_url
+from ..webhooks import FORMATS as WEBHOOK_FORMATS, send_test as send_webhook_test, validate_webhook
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 templates.env.globals.update(role_label=role_label, Role=Role)
 templates.env.tests["manageable_by"] = lambda target, actor: can_manage_user(actor, target)
 templates.env.globals.update(task_status_labels=tasksvc.STATUS_LABELS, verification_labels=tasksvc.VERIFICATION_LABELS,
                              can_edit_task=tasksvc.can_edit, can_delete_task=tasksvc.can_delete)
+templates.env.globals.update(webhook_formats=WEBHOOK_FORMATS, highlight=searchsvc.highlight)
 templates.env.filters["dt"] = lambda v, seconds=False: v.strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M") if v else ""
 
 router = APIRouter(dependencies=[Depends(csrf_protect)], include_in_schema=False)
@@ -415,8 +418,9 @@ def boards_index(request: Request, user: User = Depends(current_user), db: Sessi
     boards = boardsvc.accessible_boards(db, user)
     stats = {b.key: boardsvc.board_stats(db, b) for b in boards}
     deletable = [b for b in boards if b.project and can_manage_projects(user, b.tenancy, b.department)]
+    subscribed = {subsvc.board_of(s).key for s in subsvc.user_subscriptions(db, user) if s.kind == "board"}
     return render(request, "boards.html", user, boards=boards, stats=stats, scopes=_project_scopes(db, user),
-                  deletable=deletable)
+                  deletable=deletable, subscribed=subscribed)
 
 
 def _board_or_404(db: Session, user: User, key: str) -> boardsvc.Board:
@@ -471,6 +475,8 @@ def _board_page(request: Request, db: Session, user: User, board: boardsvc.Board
     return render(
         request, "board.html", user, board=board, posts=posts, counts=boardsvc.comment_counts(db, posts),
         opened=opened, can_moderate=can_moderate, projects=projects,
+        board_subscribed=subsvc.board_subscription(db, user, board) is not None,
+        post_subscribed=bool(opened and subsvc.post_subscription(db, user, opened) is not None),
         move_targets=[b for b in boardsvc.accessible_boards(db, user) if b.key != board.key]
         if opened and can_move_post(user, opened) else [],
         can_manage_projects=can_manage_projects(user, board.tenancy, board.department),
@@ -618,6 +624,78 @@ def _flash_batch(request: Request, deleted: int, requested: int) -> None:
               n=deleted, total=requested)
     else:
         flash(request, "Deleted {n} item(s).", "success", n=deleted)
+
+
+# ---- subscriptions --------------------------------------------------------------
+
+
+@router.post("/subscriptions/board")
+def subscription_board(
+    request: Request,
+    board: str = Form(...),
+    action: str = Form("subscribe"),
+    next: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    b = _board_or_404(db, user, board)
+    if action == "unsubscribe":
+        subsvc.unsubscribe(db, subsvc.board_subscription(db, user, b))
+        flash(request, "Unsubscribed from {name}.", "success", name=b.key)
+    else:
+        subsvc.subscribe_board(db, user, b)
+        flash(request, "Subscribed to {name}. New posts will arrive in your inbox.", "success", name=b.key)
+    return redirect(safe_next(next, f"/boards/{b.key}"))
+
+
+@router.post("/subscriptions/post/{post_id}")
+def subscription_post(
+    request: Request,
+    post_id: int,
+    action: str = Form("subscribe"),
+    next: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    post = _post_or_404(db, user, post_id)
+    if action == "unsubscribe":
+        subsvc.unsubscribe(db, subsvc.post_subscription(db, user, post))
+        flash(request, "Unsubscribed from post #{id}.", "success", id=post.id)
+    else:
+        subsvc.subscribe_post(db, user, post)
+        flash(request, "Subscribed to post #{id}. New comments will arrive in your inbox.", "success", id=post.id)
+    return redirect(safe_next(next, _post_url(post)))
+
+
+@router.post("/subscriptions/{sub_id}/delete")
+def subscription_delete(request: Request, sub_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    sub = db.get(Subscription, sub_id)
+    if sub is None or sub.user_id != user.id:
+        raise HTTPException(404, "Subscription not found")
+    subsvc.unsubscribe(db, sub)
+    flash(request, "Subscription removed.", "success")
+    return redirect("/account#subscriptions")
+
+
+# ---- search ---------------------------------------------------------------------
+
+
+@router.get("/search")
+def search_page(
+    request: Request,
+    q: str = "",
+    scope: str = "",
+    board: str = "",
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    b = _board_or_404(db, user, board) if board else None
+    scopes = [scope] if scope in searchsvc.SCOPES else list(searchsvc.SCOPES)
+    if b is not None and scope not in searchsvc.SCOPES:
+        scopes = ["posts", "comments", "tasks"]
+    result = searchsvc.search(db, user, q, scopes, board=b, limit=50) if q.strip() else None
+    return render(request, "search.html", user, q=q, scope=scope if scope in searchsvc.SCOPES else "",
+                  board=b, result=result, query=searchsvc.parse(q), board_options=boardsvc.accessible_boards(db, user))
 
 
 # ---- task boards (pinned on every board) --------------------------------------
@@ -893,9 +971,73 @@ def projects_batch_delete(
 # ---- account, machines & API keys -------------------------------------------
 
 
+def _account_page(request: Request, db: Session, user: User, new_mcp_key: str | None = None):
+    failed = db.scalar(select(func.count()).where(
+        MessageDelivery.user_id == user.id, MessageDelivery.machine_id.is_(None), MessageDelivery.webhook_status == "failed"))
+    return render(request, "account.html", user, unread=_unread_by_machine(db, user), new_mcp_key=new_mcp_key,
+                  subscriptions=subsvc.user_subscriptions(db, user), board_of=subsvc.board_of,
+                  failed_webhooks=failed)
+
+
 @router.get("/account")
 def account(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    return render(request, "account.html", user, unread=_unread_by_machine(db, user), new_mcp_key=None)
+    return _account_page(request, db, user)
+
+
+@router.post("/account/webhook")
+def account_webhook(
+    request: Request,
+    webhook_url: str = Form(""),
+    webhook_format: str = Form("community"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Webhook for the account inbox (messages to an account without machines)."""
+    url = webhook_url.strip()
+    if url:
+        error = validate_webhook(url, webhook_format)
+        if error:
+            flash(request, error, "error")
+            return redirect("/account#webhook")
+    user.webhook_url = url or None
+    user.webhook_format = webhook_format if webhook_format in WEBHOOK_FORMATS else "community"
+    if not user.webhook_secret:
+        user.webhook_secret = generate_webhook_secret()
+    db.commit()
+    flash(request, "Webhook saved." if url else "Webhook removed.", "success")
+    return redirect("/account#webhook")
+
+
+@router.post("/account/webhook/test")
+def account_webhook_test(request: Request, user: User = Depends(current_user)):
+    _flash_test(request, send_webhook_test(user, user.address("*") or user.username))
+    return redirect("/account#webhook")
+
+
+@router.post("/account/webhook/rotate")
+def account_webhook_rotate(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.webhook_secret = generate_webhook_secret()
+    db.commit()
+    flash(request, "Webhook secret rotated.", "success")
+    return redirect("/account#webhook")
+
+
+@router.post("/account/webhook/retry")
+def account_webhook_retry(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    for d in db.scalars(select(MessageDelivery).where(
+            MessageDelivery.user_id == user.id, MessageDelivery.machine_id.is_(None),
+            MessageDelivery.webhook_status == "failed")):
+        d.webhook_status, d.webhook_attempts, d.webhook_next_at = "pending", 0, utcnow()
+    db.commit()
+    flash(request, "Failed webhook deliveries re-queued.", "success")
+    return redirect("/account#webhook")
+
+
+def _flash_test(request: Request, error: str | None) -> None:
+    if error:
+        flash(request, "Test delivery failed: {error}", "error", error=error)
+    else:
+        flash(request, "Test message delivered to the webhook.", "success")
 
 
 @router.post("/account/mcp-keys")
@@ -905,7 +1047,7 @@ def mcp_key_create(request: Request, label: str = Form(""), user: User = Depends
     db.commit()
     db.refresh(user)
     # The plaintext key is rendered once and never stored.
-    return render(request, "account.html", user, unread=_unread_by_machine(db, user), new_mcp_key=raw)
+    return _account_page(request, db, user, new_mcp_key=raw)
 
 
 @router.post("/mcp-keys/{key_id}/revoke")
@@ -1009,19 +1151,28 @@ def machine_webhook(
     request: Request,
     machine_id: int,
     webhook_url: str = Form(""),
+    webhook_format: str = Form("community"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     m = _managed_machine(db, user, machine_id)
     url = webhook_url.strip()
     if url:
-        error = validate_webhook_url(url)
+        error = validate_webhook(url, webhook_format)
         if error:
             flash(request, error, "error")
             return redirect(f"/machines/{m.id}")
     m.webhook_url = url or None
+    m.webhook_format = webhook_format if webhook_format in WEBHOOK_FORMATS else "community"
     db.commit()
     flash(request, "Webhook saved." if url else "Webhook removed.", "success")
+    return redirect(f"/machines/{m.id}")
+
+
+@router.post("/machines/{machine_id}/webhook/test")
+def machine_webhook_test(request: Request, machine_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    m = _managed_machine(db, user, machine_id)
+    _flash_test(request, send_webhook_test(m, m.address))
     return redirect(f"/machines/{m.id}")
 
 

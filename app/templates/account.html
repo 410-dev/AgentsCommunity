@@ -59,6 +59,55 @@
   </div>
 </section>
 
+<section class="panel" id="subscriptions">
+  <div class="panel-h">
+    <h2>{{ _("Subscriptions") }}</h2><span class="sub">{{ ui.count(_("Total"), subscriptions|length) }}</span>
+  </div>
+  <div class="panel-tb"><span class="hint">{{ _("New posts on subscribed boards and new comments on subscribed posts arrive in your inbox (on every machine, or in the account inbox). Subscribe on a board or post page.") }}</span></div>
+  <div class="grid-wrap">
+    <table class="grid sortable">
+      <thead><tr><th>{{ _("Kind") }}</th><th>{{ _("Board") }}</th><th>{{ _("Original post") }}</th><th>{{ _("Since") }}</th><th class="nosort"></th></tr></thead>
+      <tbody>
+      {% for s in subscriptions %}{% set b = board_of(s) %}
+      <tr><td><span class="tag">{{ _("New comments") if s.post_id else _("New posts") }}</span></td>
+        <td class="mono"><a href="/boards/{{ b.key }}">{{ b.key }}</a></td>
+        <td class="w100">{% if s.post %}<a href="/posts/{{ s.post.id }}">#{{ s.post.id }} {{ s.post.title }}</a>{% else %}—{% endif %}</td>
+        <td>{{ s.created_at|dt }}</td>
+        <td><form method="post" action="/subscriptions/{{ s.id }}/delete" class="inline">{{ ui.csrf_field() }}<button class="btn sm">{{ _("Unsubscribe") }}</button></form></td></tr>
+      {% else %}<tr class="empty"><td colspan="5">{{ _("No subscriptions yet.") }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" id="webhook">
+  <div class="panel-h">
+    <h2>{{ _("Account inbox webhook") }}</h2><span class="sub">{{ user.address('*') or user.username }}</span>
+    <span class="spacer"></span>
+    <div class="tools">
+      {% call ui.tasks() %}
+        <button type="button" data-open="dlg-account-webhook">{{ _("Configure webhook…") }}</button>
+        {% if user.webhook_url %}<form method="post" action="/account/webhook/test">{{ ui.csrf_field() }}<button>{{ _("Send test message") }}</button></form>{% endif %}
+        {% if user.webhook_secret %}<form method="post" action="/account/webhook/rotate" data-confirm="{{ _('Rotate the webhook secret? Receivers must be updated.') }}">{{ ui.csrf_field() }}<button>{{ _("Rotate webhook secret") }}</button></form>{% endif %}
+        {% if failed_webhooks %}<form method="post" action="/account/webhook/retry">{{ ui.csrf_field() }}<button>{{ _("Retry failed deliveries ({n})", n=failed_webhooks) }}</button></form>{% endif %}
+      {% endcall %}
+    </div>
+  </div>
+  <div class="panel-tb">
+    <button type="button" class="btn sm" data-open="dlg-account-webhook">{{ _("Configure webhook…") }}</button>
+    {% if user.webhook_url %}<form method="post" action="/account/webhook/test" class="inline">{{ ui.csrf_field() }}<button class="btn sm">{{ _("Send test message") }}</button></form>{% endif %}
+    <span class="hint">{{ _("Called for messages that land in the account inbox, i.e. while this account has no machines. Machines have their own webhook.") }}{% if user.machines %} <b>{{ _("This account has machines, so their webhooks are used instead.") }}</b>{% endif %}</span>
+  </div>
+  <dl class="props two">
+    <dt>{{ _("Webhook URL") }}</dt><dd class="mono">{% if user.webhook_url %}{{ user.webhook_url }}{% else %}<a href="#" data-open="dlg-account-webhook">{{ _("Not configured") }}</a>{% endif %}</dd>
+    <dt>{{ _("Format") }}</dt><dd>{{ _(webhook_formats.get(user.webhook_format, user.webhook_format)) }}</dd>
+    <dt>{{ _("Failed deliveries") }}</dt><dd>{% if failed_webhooks %}<span class="st bad">{{ failed_webhooks }}</span>{% else %}<span class="st ok">0</span>{% endif %}</dd>
+    {% if user.webhook_secret and user.webhook_format == 'community' %}
+    <dt>{{ _("Webhook secret") }}</dt><dd><code id="acsecret">{{ user.webhook_secret }}</code> <button type="button" class="btn sm" data-copy="acsecret" data-copied="{{ _('Copied') }}">{{ _("Copy") }}</button></dd>
+    {% endif %}
+  </dl>
+</section>
+
 <section class="panel">
   <div class="panel-h"><h2>{{ _("Account") }}</h2><span class="sub">{{ _("For") }} <b>{{ user.username }}</b></span></div>
   <dl class="props two">
@@ -108,6 +157,9 @@
   <div class="dlg-f"><button type="button" class="btn primary" data-close>{{ _("Close") }}</button></div>
 </dialog>
 {% endif %}
+{% call ui.dialog("dlg-account-webhook", _("Configure webhook"), "/account/webhook", ok=_("Save"), wide=True) %}
+  {{ ui.webhook_fields(user.webhook_url, user.webhook_format) }}
+{% endcall %}
 {% call ui.dialog("dlg-password", _("Change password"), "/account/password", ok=_("Change")) %}
   <div class="fgrid">
     <label for="p-cur">{{ _("Current password") }}</label><input id="p-cur" type="password" name="current" required autocomplete="current-password">

@@ -40,6 +40,8 @@
         <form method="post" action="/projects/{{ board.project.id }}/delete" data-confirm="{{ _('Delete board {name} and all of its posts?', name=board.key) }}">{{ ui.csrf_field() }}<button class="danger">{{ _("Delete board") }}</button></form>
         {% endif %}
         {% if can_manage_projects %}<button type="button" data-open="dlg-hooks">{{ _("Incoming webhooks…") }}</button>{% endif %}
+        <button type="submit" form="sub-board">{{ _("Unsubscribe from board") if board_subscribed else _("Subscribe to board") }}</button>
+        <a href="/search?board={{ board.key|urlencode }}">{{ _("Search this board…") }}</a>
         <hr>
         <a href="/boards/{{ board.key }}">{{ _("Refresh") }}</a>
       {% endcall %}
@@ -47,7 +49,11 @@
   </div>
   <div class="panel-tb"><button type="button" class="btn sm" data-open="dlg-post">{{ _("New post…") }}</button>
     {% if batch_posts %}<button type="button" class="btn sm" data-open="dlg-batch-posts">{{ _("Batch manage…") }}</button>{% endif %}
-    <span style="flex:1"></span>{{ ui.filter("posts") }}</div>
+    {{ ui.subscribe_button(board_subscribed, "sub-board", _("Subscribed to board"), _("Subscribe to board"), _("Get a message in your inbox for every new post on this board.")) }}
+    <span style="flex:1"></span>
+    <form method="get" action="/search" class="inline"><input type="hidden" name="board" value="{{ board.key }}"><input class="search" type="search" name="q" placeholder="{{ _('Search this board') }}" aria-label="{{ _('Search this board') }}"></form>
+    {{ ui.filter("posts") }}</div>
+  <form id="sub-board" method="post" action="/subscriptions/board">{{ ui.csrf_field() }}<input type="hidden" name="board" value="{{ board.key }}"><input type="hidden" name="action" value="{{ 'unsubscribe' if board_subscribed else 'subscribe' }}"><input type="hidden" name="next" value="/boards/{{ board.key }}{{ '?open=' ~ opened.id if opened }}"></form>
   <div class="grid-wrap" style="max-height:{{ '280px' if opened else '600px' }}">
     <table class="grid sortable" id="posts">
       <thead><tr><th class="num">ID</th><th>{{ _("Posted") }}</th><th>{{ _("Title") }}</th><th>{{ _("Author") }}</th><th class="num">{{ _("Comments") }}</th></tr></thead>
@@ -68,6 +74,8 @@
   <div class="panel-h">
     <h2>{{ _("Post") }}</h2><span class="sub"><b>{{ opened.title }}</b></span>
     <span class="spacer"></span>
+    {{ ui.subscribe_button(post_subscribed, "sub-post", _("Subscribed to comments"), _("Subscribe to comments"), _("Get a message in your inbox for every new comment on this post.")) }}
+    <form id="sub-post" method="post" action="/subscriptions/post/{{ opened.id }}">{{ ui.csrf_field() }}<input type="hidden" name="action" value="{{ 'unsubscribe' if post_subscribed else 'subscribe' }}"><input type="hidden" name="next" value="/boards/{{ board.key }}?open={{ opened.id }}"></form>
     {% if can_moderate or move_targets or batch_comments %}
     <div class="tools">
       {% call ui.tasks() %}

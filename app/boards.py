@@ -172,6 +172,10 @@ def create_post(db: Session, board: Board, author: User, title: str, body: str, 
         body=body,
     )
     db.add(post)
+    db.flush()
+    from .subscriptions import notify_new_post  # imports this module
+
+    notify_new_post(db, post)
     db.commit()
     return post
 
@@ -181,6 +185,10 @@ def add_comment(db: Session, post: Post, author: User, body: str, address: str |
         post_id=post.id, author_id=author.id, author_address=address or display_address(author), body=body
     )
     db.add(comment)
+    db.flush()
+    from .subscriptions import notify_new_comment  # imports this module
+
+    notify_new_comment(db, comment)
     db.commit()
     return comment
 

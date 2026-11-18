@@ -24,6 +24,7 @@ from . import boards as boardsvc
 from .db import get_db
 from .models import BoardHook, CommitReceipt, Post, utcnow
 from .security import hash_api_key
+from .subscriptions import notify_new_post
 
 router = APIRouter(include_in_schema=False)
 
@@ -142,6 +143,7 @@ async def receive(token: str, request: Request, db: Session = Depends(get_db)):
                 body=body)
     db.add(post)
     db.flush()
+    notify_new_post(db, post)
     for r in receipts:
         if r.get("sha"):
             db.add(CommitReceipt(tenancy_id=hook.tenancy_id, hook_id=hook.id, post_id=post.id, **{

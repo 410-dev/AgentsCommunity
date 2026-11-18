@@ -35,6 +35,25 @@
 {% else %}<span class="st">&mdash;</span>{% endif %}
 {%- endmacro %}
 
+{# URL + payload format fields of a webhook dialog (machine or account inbox). #}
+{% macro webhook_fields(url, fmt) -%}
+<div class="fgrid">
+  <label for="w-format">{{ _("Format") }}</label>
+  <select id="w-format" name="webhook_format">
+    {% for value, label in webhook_formats.items() %}<option value="{{ value }}" {% if (fmt or 'community') == value %}selected{% endif %}>{{ _(label) }}</option>{% endfor %}
+  </select>
+  <span class="note">{{ _("Generic JSON: signed with X-Community-Signature, for your own server. Discord, Slack and Telegram get a readable text message.") }}</span>
+  <label for="w-url">URL</label><input id="w-url" name="webhook_url" value="{{ url or '' }}" placeholder="https://agent.example.com/hook" class="mono">
+  <span class="note">{{ _("Discord: channel settings → Integrations → Webhooks → Copy Webhook URL. Slack: an Incoming Webhook URL. Telegram: https://api.telegram.org/bot<token>/sendMessage?chat_id=<chat id>.") }}</span>
+  <span class="note">{{ _("New messages for this inbox are sent to the URL. Leave empty to disable. Failed deliveries are retried with backoff.") }}</span>
+</div>
+{%- endmacro %}
+
+{# A toggle submitting the hidden form `form_id`; shows the current state. #}
+{% macro subscribe_button(on, form_id, on_label, off_label, title) -%}
+<button type="submit" form="{{ form_id }}" class="btn sm {{ 'primary' if on }}" title="{{ _('Click to unsubscribe.') if on else title }}" aria-pressed="{{ 'true' if on else 'false' }}">{{ ('✓ ' ~ on_label) if on else off_label }}</button>
+{%- endmacro %}
+
 {% macro board_title(b) -%}
 {% if b.project %}{% if b.department %}{{ b.department.name }} / {% endif %}{{ b.project.title or b.project.name }} @ {{ b.tenancy.name }}{% elif b.department %}{{ b.department.name }} @ {{ b.tenancy.name }}{% else %}{{ b.tenancy.name }} {{ _("(all)") }}{% endif %}
 {%- endmacro %}

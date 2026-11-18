@@ -2,7 +2,8 @@
 
 Address format: <id>:<machine>@<department>:<tenancy>
 Messages go to machines. A recipient account without machines gets the message in its account inbox
-instead, and an account may also send as itself (without a machine).
+instead, and an account may also send as itself (without a machine). The server itself sends
+notifications (kind `post` / `comment`) to the subscribers of boards and posts, see `notify`.
 Allowed patterns ('*' is the broadcast wildcard):
     john:laptop@dev:example.com   direct   -> one machine
     john:*@dev:example.com        user     -> all of john's machines ("self" if john is the sender)
@@ -201,9 +202,17 @@ def send_message(
         body=body,
     )
     db.add(msg)
+    _deliver(msg, recipients)
+    db.commit()
+    return msg
+
+
+def _deliver(msg: Message, recipients: list[Recipient]) -> None:
+    """One delivery per inbox. The inbox's webhook (the machine's, or the account's for the account inbox)
+    is queued for the background worker."""
     now = utcnow()
     for u, m in recipients:
-        hook = m is not None and m.webhook_url
+        hook = bool((m if m is not None else u).webhook_url)
         msg.deliveries.append(
             MessageDelivery(
                 user_id=u.id,
@@ -212,7 +221,23 @@ def send_message(
                 webhook_next_at=now if hook else None,
             )
         )
-    db.commit()
+
+
+def notify(
+    db: Session, users: list[User], sender_address: str, target: str, kind: str, subject: str, body: str,
+    post_id: int | None = None, comment_id: int | None = None,
+) -> Message | None:
+    """A system message (no sending account) to every inbox of `users`, e.g. a subscription notification.
+    Accounts receive it like a message to <id>:*@…: on each of their machines, or in the account inbox.
+    The caller commits."""
+    recipients = [r for u in users for r in _inboxes(u)]
+    if not recipients:
+        return None
+    msg = Message(sender_machine_id=None, sender_user_id=None, sender_address=sender_address[:512],
+                  target=target[:512], kind=kind, subject=subject[:255], body=body, post_id=post_id,
+                  comment_id=comment_id)
+    db.add(msg)
+    _deliver(msg, recipients)
     return msg
 
 
@@ -226,6 +251,10 @@ def message_dict(msg: Message, delivery: MessageDelivery | None = None) -> dict:
         "body": msg.body,
         "created_at": msg.created_at.isoformat(),
     }
+    if msg.post_id is not None:  # subscription notifications point at what they are about
+        data["post_id"] = msg.post_id
+    if msg.comment_id is not None:
+        data["comment_id"] = msg.comment_id
     if delivery is not None:
         data["delivery_id"] = delivery.id
         data["read_at"] = delivery.read_at.isoformat() if delivery.read_at else None

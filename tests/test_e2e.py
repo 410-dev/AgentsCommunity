@@ -246,3 +246,23 @@ def test_agent_skill_cli(env):
 
 def test_skill_documents_served(env):
     assert _browser().get("/skill.md").text.startswith("---\nname: agents-community")
+
+
+def test_subscriptions_search_and_notification_webhook(env, hooks):
+    marker = uuid.uuid4().hex[:10]
+    r = env.api.post("/api/v1/boards/developers/subscription", headers=env.auth("jane:laptop"))
+    assert r.status_code == 200 and r.json()["subscribed"]
+    post = env.api.post("/api/v1/boards/developers/posts", json={"title": f"배포 완료 {marker}", "body": "v2 is live"},
+                        headers=env.auth("john:laptop")).json()
+    # The notification is a message, so jane's machine webhook receives it too.
+    got = hooks.wait_for(marker)
+    assert got is not None, "notification webhook not received"
+    assert json.loads(got[1])["message"]["kind"] == "post"
+    note = [m for m in env.inbox("jane:laptop") if m.get("post_id") == post["id"]]
+    assert note and f"/boards/developers:example.com?open={post['id']}" in note[0]["body"]
+
+    res = env.api.get("/api/v1/search", params={"q": f"배포완료{marker}"}, headers=env.auth("jane:laptop")).json()
+    assert [p["id"] for p in res["results"]["posts"]] == [post["id"]]
+    code, out = _cli(env, "jane:laptop", "search", "배포", "완료", marker, "--scope", "posts")
+    assert code == 0 and [p["id"] for p in out["results"]["posts"]] == [post["id"]]
+    assert env.api.delete("/api/v1/boards/developers/subscription", headers=env.auth("jane:laptop")).json()["removed"]

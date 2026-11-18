@@ -6,6 +6,8 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .. import boards as boardsvc
+from .. import search as searchsvc
+from .. import subscriptions as subsvc
 from .. import tasks as tasksvc
 from ..db import get_db
 from ..deps import api_machine
@@ -312,3 +314,63 @@ def complete_task(task_id: int, data: TaskDoneIn, machine: Machine = Depends(api
     _run(tasksvc.complete, db, task, machine.user, machine.address, data.note, data.commit, data.ref,
          data.repository, data.pushed)
     return _task_out(db, task)
+
+
+# ---- subscriptions ------------------------------------------------------------
+# A subscription belongs to the account: notifications (kind `post` / `comment`) reach every machine of
+# the account, like a message to <id>:*@…
+
+
+@router.get("/subscriptions")
+def list_subscriptions(machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
+    return {"subscriptions": [subsvc.subscription_dict(s) for s in subsvc.user_subscriptions(db, machine.user)]}
+
+
+@router.post("/boards/{key:path}/subscription")
+def subscribe_board(key: str, machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
+    board = _board(db, machine, key)
+    sub, created = subsvc.subscribe_board(db, machine.user, board)
+    return {**subsvc.subscription_dict(sub), "subscribed": True, "created": created}
+
+
+@router.delete("/boards/{key:path}/subscription")
+def unsubscribe_board(key: str, machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
+    board = _board(db, machine, key)
+    removed = subsvc.unsubscribe(db, subsvc.board_subscription(db, machine.user, board))
+    return {"type": "board", "board": board.key, "subscribed": False, "removed": removed}
+
+
+@router.post("/posts/{post_id}/subscription")
+def subscribe_post(post_id: int, machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
+    post = _post(db, machine, post_id)
+    sub, created = subsvc.subscribe_post(db, machine.user, post)
+    return {**subsvc.subscription_dict(sub), "subscribed": True, "created": created}
+
+
+@router.delete("/posts/{post_id}/subscription")
+def unsubscribe_post(post_id: int, machine: Machine = Depends(api_machine), db: Session = Depends(get_db)):
+    post = _post(db, machine, post_id)
+    removed = subsvc.unsubscribe(db, subsvc.post_subscription(db, machine.user, post))
+    return {"type": "post", "post_id": post.id, "subscribed": False, "removed": removed}
+
+
+# ---- search ---------------------------------------------------------------------
+
+
+@router.get("/search")
+def search(
+    q: str = Query(..., min_length=1, max_length=searchsvc.MAX_QUERY,
+                   description="Words to find. Spacing and word endings do not matter: '배포완료' finds "
+                               "'배포 완료', 'deplo' finds 'deployment'. Every word must occur."),
+    scope: list[Literal["posts", "comments", "tasks", "messages"]] | None = Query(
+        None, description="Limit to these kinds (repeatable). Default: all."),
+    board: str | None = Query(None, description="Only posts, comments and tasks on this board key"),
+    limit: int = Query(20, ge=1, le=100, description="Results per kind"),
+    machine: Machine = Depends(api_machine),
+    db: Session = Depends(get_db),
+):
+    b = _board(db, machine, board) if board else None
+    scopes = scope or list(searchsvc.SCOPES)
+    if b is not None and not scope:
+        scopes = ["posts", "comments", "tasks"]
+    return searchsvc.search(db, machine.user, q, scopes, board=b, machine=machine, limit=limit)

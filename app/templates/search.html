@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block crumb %}{{ ui.c(_("Search")) }}{% if result %}{{ ui.c(q) }}{% endif %}{% endblock %}
+{% macro hl(text) -%}{% for chunk, hit in highlight(text or "", query) %}{% if hit %}<mark class="hit">{{ chunk }}</mark>{% else %}{{ chunk }}{% endif %}{% endfor %}{%- endmacro %}
+{% macro when(iso) -%}{{ iso[:16]|replace("T", " ") }}{%- endmacro %}
+{% block content %}
+<section class="panel">
+  <div class="panel-h"><h2>{{ _("Search") }}</h2><span class="sub">{{ _("Posts, comments, tasks and your messages") }}</span></div>
+  <form class="panel-tb" method="get" action="/search" role="search">
+    <input class="search" type="search" name="q" value="{{ q }}" autofocus required placeholder="{{ _('Search') }}" aria-label="{{ _('Search') }}" style="width:320px">
+    <label class="hint" for="s-scope">{{ _("Kind") }}</label>
+    <select id="s-scope" name="scope">
+      <option value="">{{ _("Everything") }}</option>
+      {% for value, label in [("posts", _("Posts")), ("comments", _("Comments")), ("tasks", _("Tasks")), ("messages", _("Messages"))] %}
+      <option value="{{ value }}" {% if scope == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <label class="hint" for="s-board">{{ _("Board") }}</label>
+    <select id="s-board" name="board" class="mono">
+      <option value="">{{ _("All boards") }}</option>
+      {% for b in board_options %}<option value="{{ b.key }}" {% if board and board.key == b.key %}selected{% endif %}>{{ b.key }}</option>{% endfor %}
+    </select>
+    <button class="btn sm primary">{{ _("Search") }}</button>
+    <span class="hint">{{ _("Spacing and word endings do not matter: every word you type must appear somewhere in the text.") }}</span>
+  </form>
+</section>
+
+{% if result %}
+{% set r = result.results %}
+{% set total = (r.posts or [])|length + (r.comments or [])|length + (r.tasks or [])|length + (r.messages or [])|length %}
+{% if not total %}<div class="notice info">{{ _("Nothing found for {q}.", q=q) }}</div>{% endif %}
+
+{% if r.posts %}
+<section class="panel results">
+  <div class="panel-h"><h2>{{ _("Posts") }}</h2><span class="sub">{{ ui.count(_("Found"), r.posts|length) }}</span></div>
+  <div class="grid-wrap"><table class="grid">
+    <thead><tr><th class="num">ID</th><th>{{ _("Board") }}</th><th>{{ _("Title") }}</th><th>{{ _("Excerpt") }}</th><th>{{ _("Author") }}</th><th>{{ _("Posted") }}</th></tr></thead>
+    <tbody>{% for p in r.posts %}
+    <tr data-href="/posts/{{ p.id }}"><td class="num">{{ p.id }}</td><td class="mono">{{ p.board }}</td>
+      <td><a href="/posts/{{ p.id }}">{{ hl(p.title) }}</a></td><td class="w100 snip">{{ hl(p.snippet) }}</td>
+      <td class="mono">{{ p.author }}</td><td>{{ when(p.created_at) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+{% if r.comments %}
+<section class="panel results">
+  <div class="panel-h"><h2>{{ _("Comments") }}</h2><span class="sub">{{ ui.count(_("Found"), r.comments|length) }}</span></div>
+  <div class="grid-wrap"><table class="grid">
+    <thead><tr><th>{{ _("Original post") }}</th><th>{{ _("Board") }}</th><th>{{ _("Excerpt") }}</th><th>{{ _("Author") }}</th><th>{{ _("Posted") }}</th></tr></thead>
+    <tbody>{% for c in r.comments %}
+    <tr data-href="/posts/{{ c.post_id }}#comments"><td><a href="/posts/{{ c.post_id }}#comments">#{{ c.post_id }} {{ c.title }}</a></td>
+      <td class="mono">{{ c.board }}</td><td class="w100 snip">{{ hl(c.snippet) }}</td>
+      <td class="mono">{{ c.author }}</td><td>{{ when(c.created_at) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+{% if r.tasks %}
+<section class="panel results">
+  <div class="panel-h"><h2>{{ _("Tasks") }}</h2><span class="sub">{{ ui.count(_("Found"), r.tasks|length) }}</span></div>
+  <div class="grid-wrap"><table class="grid">
+    <thead><tr><th class="num">ID</th><th>{{ _("Board") }}</th><th>{{ _("Title") }}</th><th>{{ _("Status") }}</th><th>{{ _("Excerpt") }}</th><th>{{ _("Assignee") }}</th></tr></thead>
+    <tbody>{% for t in r.tasks %}
+    <tr data-href="/boards/{{ t.board }}#tasks"><td class="num">{{ t.id }}</td><td class="mono">{{ t.board }}</td>
+      <td><a href="/boards/{{ t.board }}#tasks">{{ hl(t.title) }}</a></td><td><span class="tag">{{ _(task_status_labels[t.status]) }}</span></td>
+      <td class="w100 snip">{{ hl(t.snippet) }}</td><td class="mono">{{ t.assignee or '—' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
+{% if r.messages %}
+<section class="panel results">
+  <div class="panel-h"><h2>{{ _("Messages") }}</h2><span class="sub">{{ ui.count(_("Found"), r.messages|length) }}</span></div>
+  <div class="grid-wrap"><table class="grid">
+    <thead><tr><th>{{ _("Date") }}</th><th>{{ _("Box") }}</th><th>{{ _("From") }}</th><th>{{ _("Kind") }}</th><th>{{ _("Subject") }}</th><th>{{ _("Excerpt") }}</th></tr></thead>
+    <tbody>{% for m in r.messages %}{% set href = ("/messages?open=" ~ m.delivery_id) if m.delivery_id else ("/messages?box=sent&open=" ~ m.id) %}
+    <tr data-href="{{ href }}"><td>{{ when(m.created_at) }}</td><td>{{ _("Inbox") if m.box == "inbox" else _("Sent") }}</td>
+      <td class="mono">{{ hl(m.from) }}</td><td><span class="tag">{{ _(m.kind) }}</span></td>
+      <td><a href="{{ href }}">{{ hl(m.subject) if m.subject else _('(no subject)') }}</a></td><td class="w100 snip">{{ hl(m.snippet) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

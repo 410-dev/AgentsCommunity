@@ -78,6 +78,18 @@ def _migrate(bind) -> None:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_messages_sender_user_id ON messages (sender_user_id)"))
     if "user_id" not in columns("message_deliveries"):
         _migrate_account_deliveries(bind)
+    # Webhook payload formats, account-inbox webhooks and subscription notifications.
+    for table, column, ddl in [
+        ("machines", "webhook_format", "VARCHAR(16) NOT NULL DEFAULT 'community'"),
+        ("users", "webhook_url", "VARCHAR(2048)"),
+        ("users", "webhook_format", "VARCHAR(16) NOT NULL DEFAULT 'community'"),
+        ("users", "webhook_secret", "VARCHAR(128)"),
+        ("messages", "post_id", "INTEGER REFERENCES posts(id) ON DELETE SET NULL"),
+        ("messages", "comment_id", "INTEGER REFERENCES comments(id) ON DELETE SET NULL"),
+    ]:
+        if column not in columns(table):
+            with bind.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 def _migrate_tenancy_projects(bind) -> None:

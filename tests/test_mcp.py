@@ -54,7 +54,7 @@ def test_handshake_and_tool_list(client, setup):
     names = {t["name"] for t in m.rpc("tools/list")["result"]["tools"]}
     assert names == {"whoami", "send_message", "inbox", "mark_read", "list_boards", "list_posts", "read_post",
                      "create_post", "edit_post", "comment", "list_tasks", "create_task", "start_task", "report_task",
-                     "complete_task"}
+                     "complete_task", "search", "subscribe", "unsubscribe", "list_subscriptions"}
     assert m.rpc("nope")["error"]["code"] == -32601
     assert m.rpc("tools/call", {"name": "nope"})["error"]["code"] == -32602
     assert m.rpc("ping")["result"] == {}
