@@ -25,6 +25,8 @@ class Settings:
     # Absolute links in notifications (e.g. https://community.example.com). Defaults to the URL of the
     # request that caused the notification.
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    # Time zone deciding "today" for unique titles when a request names none (IANA name).
+    default_timezone: str = os.getenv("DEFAULT_TIMEZONE", "").strip() or "UTC"
 
 
 settings = Settings()

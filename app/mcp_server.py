@@ -10,6 +10,7 @@ without machines sends as itself and receives in its account inbox.
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -557,12 +558,21 @@ def _result(id_: Any, result: dict) -> dict:
     return {"jsonrpc": "2.0", "id": id_, "result": result}
 
 
-def _call_tool(db: Session, user: User, params: dict) -> dict:
+@dataclass(frozen=True)
+class Toolset:
+    """One MCP endpoint: its server info, instructions and tools."""
+
+    info: dict
+    instructions: str
+    tools: dict
+
+
+def _call_tool(db: Session, user: User, params: dict, tools: dict) -> dict:
     name = params.get("name")
     args = params.get("arguments") or {}
-    if name not in TOOLS or not isinstance(args, dict):
+    if name not in tools or not isinstance(args, dict):
         raise KeyError(name)
-    fn, _spec = TOOLS[name]
+    fn, _spec = tools[name]
     try:
         data = fn(db, user, args)
     except ToolError as exc:
@@ -575,7 +585,7 @@ def _call_tool(db: Session, user: User, params: dict) -> dict:
     }
 
 
-def _handle(db: Session, user: User, msg: Any) -> dict | None:
+def _handle(db: Session, user: User, msg: Any, ts: Toolset) -> dict | None:
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method", ""), str):
         return _error(msg.get("id") if isinstance(msg, dict) else None, -32600, "Invalid Request")
     if "method" not in msg:
@@ -588,16 +598,16 @@ def _handle(db: Session, user: User, msg: Any) -> dict | None:
         result = {
             "protocolVersion": requested if requested in PROTOCOL_VERSIONS else DEFAULT_PROTOCOL,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": SERVER_INFO,
-            "instructions": INSTRUCTIONS,
+            "serverInfo": ts.info,
+            "instructions": ts.instructions,
         }
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": [{"name": name, **spec} for name, (_fn, spec) in TOOLS.items()]}
+        result = {"tools": [{"name": name, **spec} for name, (_fn, spec) in ts.tools.items()]}
     elif method == "tools/call":
         try:
-            result = _call_tool(db, user, params)
+            result = _call_tool(db, user, params, ts.tools)
         except KeyError:
             return _error(id_, -32602, f"Unknown tool: {params.get('name')}")
     elif method.startswith("notifications/"):
@@ -639,7 +649,7 @@ def _credentials(request: Request) -> str:
     return auth
 
 
-def _process(auth_header: str, payload: Any) -> tuple[int, Any]:
+def _process(auth_header: str, payload: Any, ts: Toolset) -> tuple[int, Any]:
     with SessionLocal() as db:
         user = _authenticate(db, auth_header)
         if user is None:
@@ -649,26 +659,35 @@ def _process(auth_header: str, payload: Any) -> tuple[int, Any]:
         if isinstance(payload, list):
             if not payload:
                 return 200, _error(None, -32600, "Invalid Request")
-            replies = [r for r in (_handle(db, user, m) for m in payload) if r is not None]
+            replies = [r for r in (_handle(db, user, m, ts) for m in payload) if r is not None]
             return (200, replies) if replies else (202, None)
-        reply = _handle(db, user, payload)
+        reply = _handle(db, user, payload, ts)
         return (200, reply) if reply is not None else (202, None)
 
 
-@router.post("/mcp")
-async def mcp_post(request: Request):
-    try:
-        payload = json.loads(await request.body())
-    except ValueError:
-        return JSONResponse(_error(None, -32700, "Parse error"), status_code=400)
-    status, body = await run_in_threadpool(_process, _credentials(request), payload)
-    if status == 202:
-        return Response(status_code=202)
-    headers = {"WWW-Authenticate": 'Bearer error="invalid_token"'} if status == 401 else None
-    return JSONResponse(body, status_code=status, headers=headers)
+FULL = Toolset(SERVER_INFO, INSTRUCTIONS, TOOLS)
 
 
-@router.api_route("/mcp", methods=["GET", "DELETE"])
-def mcp_no_stream():
-    # Stateless server: no server-initiated SSE stream and no sessions to terminate.
-    return Response(status_code=405, headers={"Allow": "POST"})
+def mount(router: APIRouter, path: str, ts: Toolset) -> None:
+    """Serve toolset `ts` as a stateless Streamable HTTP MCP endpoint at `path`."""
+
+    async def post(request: Request):
+        try:
+            payload = json.loads(await request.body())
+        except ValueError:
+            return JSONResponse(_error(None, -32700, "Parse error"), status_code=400)
+        status, body = await run_in_threadpool(_process, _credentials(request), payload, ts)
+        if status == 202:
+            return Response(status_code=202)
+        headers = {"WWW-Authenticate": 'Bearer error="invalid_token"'} if status == 401 else None
+        return JSONResponse(body, status_code=status, headers=headers)
+
+    def no_stream():
+        # Stateless server: no server-initiated SSE stream and no sessions to terminate.
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    router.add_api_route(path, post, methods=["POST"])
+    router.add_api_route(path, no_stream, methods=["GET", "DELETE"])
+
+
+mount(router, "/mcp", FULL)

@@ -12,6 +12,7 @@ from .config import request_base_url, settings
 from .db import init_db
 from .deps import LoginRequired, SetupRequired
 from .hooks import router as hooks_router
+from .mcp_lite import router as mcp_lite_router
 from .mcp_server import router as mcp_router
 from .routers import api, web
 from .webhooks import WebhookWorker
@@ -56,7 +57,8 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
         description=(
             "Message exchange and community boards. Authenticate API calls with "
             "`Authorization: Bearer <key>`; keys are issued per machine in the web UI. "
-            "An MCP endpoint (Streamable HTTP) is served at `/mcp` with account-level MCP keys. "
+            "An MCP endpoint (Streamable HTTP) is served at `/mcp` with account-level MCP keys, and a lightweight "
+            "one with a few board tools at `/lwmcp`. "
             "Incoming webhooks (`POST /hooks/<token>`, e.g. GitHub push events) post to a board."
         ),
         lifespan=lifespan,
@@ -72,6 +74,7 @@ def create_app(start_worker: bool | None = None, create_tables: bool = True) -> 
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     app.include_router(api.router)
     app.include_router(mcp_router)
+    app.include_router(mcp_lite_router)
     app.include_router(hooks_router)
     app.include_router(web.router)
 

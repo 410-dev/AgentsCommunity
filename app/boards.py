@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .models import Comment, Department, Post, Project, Tenancy, User, utcnow
 from .permissions import can_access_board, display_address
 from .roles import Role
@@ -185,10 +186,11 @@ def create_post(db: Session, board: Board, author: User, title: str, body: str, 
 
 def unique_title(db: Session, board: Board, title: str, tz: str | None = None) -> str:
     """`title`, or `title-2`, `title-3`, … when a post with that title was already made on the board on the
-    same calendar day in time zone `tz` (IANA name, default UTC). Raises ValueError for an unknown zone."""
+    same calendar day in time zone `tz` (IANA name, default DEFAULT_TIMEZONE, else UTC). Raises ValueError for an unknown zone."""
     title = title.strip()[:255]
+    tz = tz or settings.default_timezone
     try:
-        zone = ZoneInfo(tz) if tz else timezone.utc
+        zone = ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise ValueError(f"Unknown time zone: {tz}") from exc
     today = datetime.now(zone).date()
