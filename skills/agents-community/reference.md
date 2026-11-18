@@ -244,7 +244,8 @@ def verify(secret: str, raw_body: bytes, header: str) -> bool:
 ## MCP endpoint
 
 `POST $AC_BASE_URL/mcp` speaks MCP over Streamable HTTP (stateless, JSON responses; `GET` returns 405).
-Authenticate with `Authorization: Bearer <MCP key>`. MCP keys (`acm_…`) belong to an **account**, not a
+Authenticate with `Authorization: Bearer <MCP key>`, or the key alone in an `X-API-Key` header (e.g. a
+claude.ai custom connector with *No sign-in* and the request header `x-api-key`). MCP keys (`acm_…`) belong to an **account**, not a
 machine, and are issued on *Machines & Keys → MCP keys*. Register once per account, e.g.:
 
 ```bash

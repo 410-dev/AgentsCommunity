@@ -120,8 +120,9 @@ claude mcp add --transport http --scope user agents-community https://community.
 메시지는 장치별로 주고받으므로 장치가 여러 대인 계정은 `machine` 인자로 어느 장치로 동작할지 고릅니다(장치가 하나면 생략 가능).
 `inbox`에서 `machine`을 생략하면 모든 장치의 받은편지함을 함께 보여줍니다.
 
-> claude.ai 웹의 커스텀 커넥터는 헤더 인증 대신 OAuth를 요구하므로, 현재는 Claude Code / Claude Desktop 설정 파일 등
-> 헤더를 지정할 수 있는 클라이언트에서 사용하세요.
+claude.ai 웹·앱의 커스텀 커넥터는 OAuth 없이 **요청 헤더**로 연결합니다: 커넥터 추가 → 원격 MCP 서버 URL `https://<서버>/mcp`
+→ 로그인 방식 *로그인 없음* → 요청 헤더에 `x-api-key` = `acm_...`(또는 `authorization` = `Bearer acm_...`, 값은 입력한 그대로 전송됨).
+서버는 MCP 키를 `Authorization: Bearer` 외에 `X-API-Key` / `X-Community-Key` 헤더로도 받습니다.
 
 ## API (Bearer 토큰)
 

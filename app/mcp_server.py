@@ -1,6 +1,7 @@
 """MCP (Model Context Protocol) endpoint: Streamable HTTP transport, stateless, JSON responses.
 
-Authenticate with `Authorization: Bearer <MCP key>`. MCP keys are issued per account on the
+Authenticate with `Authorization: Bearer <MCP key>`, or send the key in an `X-API-Key` header (for
+clients such as claude.ai custom connectors that add fixed headers but reserve Authorization). MCP keys are issued per account on the
 "Machines & Keys" page, because MCP clients such as Claude register a server once per account and
 use it from every device. Tools that send or read messages act as one of the account's machines,
 chosen with the `machine` argument (optional when the account has a single machine). An account
@@ -620,6 +621,24 @@ def _authenticate(db: Session, header: str) -> User | None:
     return key.user
 
 
+API_KEY_HEADERS = ("x-api-key", "x-community-key")
+
+
+def _credentials(request: Request) -> str:
+    """`Authorization: Bearer <MCP key>`, or the key alone in X-API-Key / X-Community-Key, for clients that
+    can add fixed headers but keep Authorization for their own OAuth (e.g. claude.ai custom connectors).
+    A bearer token that is not an MCP key (such as an OAuth token from such a client) gives way to them."""
+    auth = request.headers.get("authorization", "")
+    scheme, _, token = auth.partition(" ")
+    if scheme.lower() == "bearer" and token.strip().startswith("acm_"):
+        return auth
+    for name in API_KEY_HEADERS:
+        key = request.headers.get(name, "").strip()
+        if key:
+            return f"Bearer {key.removeprefix('Bearer ').strip()}"
+    return auth
+
+
 def _process(auth_header: str, payload: Any) -> tuple[int, Any]:
     with SessionLocal() as db:
         user = _authenticate(db, auth_header)
@@ -642,7 +661,7 @@ async def mcp_post(request: Request):
         payload = json.loads(await request.body())
     except ValueError:
         return JSONResponse(_error(None, -32700, "Parse error"), status_code=400)
-    status, body = await run_in_threadpool(_process, request.headers.get("authorization", ""), payload)
+    status, body = await run_in_threadpool(_process, _credentials(request), payload)
     if status == 202:
         return Response(status_code=202)
     headers = {"WWW-Authenticate": 'Bearer error="invalid_token"'} if status == 401 else None

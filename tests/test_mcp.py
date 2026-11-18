@@ -139,3 +139,16 @@ def test_issue_and_revoke_mcp_key_in_ui(client, world, db):
     assert key.label == "claude"
     client.post(f"/mcp-keys/{key.id}/revoke", data={"csrf_token": csrf_of(client.get("/account").text)})
     m.rpc("ping", status=401)
+
+
+def test_api_key_header_for_connectors(client, setup):
+    """Clients that keep Authorization for OAuth can send the MCP key in X-API-Key."""
+    key = setup.mcp["john"]
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "whoami", "arguments": {}}}
+    for headers in ({"X-API-Key": key}, {"X-Community-Key": key}, {"X-API-Key": f"Bearer {key}"},
+                    {"X-API-Key": key, "Authorization": "Bearer some-oauth-token"}):
+        r = client.post("/mcp", json=body, headers=headers)
+        assert r.status_code == 200, headers
+        assert r.json()["result"]["structuredContent"]["user"] == "john"
+    assert client.post("/mcp", json=body, headers={"X-API-Key": "acm_wrong"}).status_code == 401
+    assert client.post("/mcp", json=body).status_code == 401
